@@ -53,8 +53,7 @@ def send_otp_email(to_email: str, otp: str, name: str) -> bool:
 
     msg.attach(MIMEText(html_body, "html"))
 
-    with smtplib.SMTP(os.getenv("SMTP_HOST", "smtp.gmail.com"), int(os.getenv("SMTP_PORT", "587"))) as server:
-      server.starttls()
+    with smtplib.SMTP_SSL(os.getenv("SMTP_HOST", "smtp.gmail.com"), int(os.getenv("SMTP_PORT", "465"))) as server:
       server.login(smtp_email, smtp_password)
       server.sendmail(smtp_email, to_email, msg.as_string())
     return True
@@ -101,8 +100,7 @@ def send_share_email(
     msg["From"] = smtp_email
     msg["To"] = to_email
 
-    with smtplib.SMTP(os.getenv("SMTP_HOST", "smtp.gmail.com"), int(os.getenv("SMTP_PORT", "587"))) as server:
-      server.starttls()
+    with smtplib.SMTP_SSL(os.getenv("SMTP_HOST", "smtp.gmail.com"), int(os.getenv("SMTP_PORT", "465"))) as server:
       server.login(smtp_email, smtp_password)
       server.send_message(msg)
     return True
