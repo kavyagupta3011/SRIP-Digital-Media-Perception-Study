@@ -1,0 +1,63 @@
+[
+  {
+    "id": "post-01",
+    "category": "cricket teams",
+    "is_ai": false,
+    "label": null
+  },
+  {
+    "id": "post-02",
+    "category": "movie casts",
+    "is_ai": true,
+    "label": { "type": "text", "text": "AI Generated", "size": 0.0025, "position": "top-right" }
+  },
+  {
+    "id": "post-03",
+    "category": "F1 podiums",
+    "is_ai": false,
+    "label": null
+  },
+  {
+    "id": "post-04",
+    "category": "landscapes",
+    "is_ai": true,
+    "label": { "type": "icon", "text": "AI", "size": 0.001, "position": "bottom-left" }
+  },
+  {
+    "id": "post-05",
+    "category": "food",
+    "is_ai": false,
+    "label": null
+  },
+  {
+    "id": "post-06",
+    "category": "memes",
+    "is_ai": true,
+    "label": { "type": "text", "text": "AI Generated", "size": 0.005, "position": "top-left" }
+  },
+  {
+    "id": "post-07",
+    "category": "celebrities",
+    "is_ai": false,
+    "label": null,
+    "attention_check": true
+  },
+  {
+    "id": "post-08",
+    "category": "pets",
+    "is_ai": false,
+    "label": null
+  },
+  {
+    "id": "post-09",
+    "category": "entertainment groups",
+    "is_ai": true,
+    "label": { "type": "icon", "text": "AI", "size": 0.0005, "position": "bottom-right" }
+  },
+  {
+    "id": "post-10",
+    "category": "sports celebrations",
+    "is_ai": true,
+    "label": { "type": "text", "text": "AI Generated", "size": 0.001, "position": "top-right" }
+  }
+]

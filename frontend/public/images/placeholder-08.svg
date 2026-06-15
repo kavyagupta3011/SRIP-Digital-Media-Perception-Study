@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="600" viewBox="0 0 800 600">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0f2d2e"/>
+      <stop offset="100%" stop-color="#5ee6c4"/>
+    </linearGradient>
+  </defs>
+  <rect width="800" height="600" fill="url(#g)"/>
+  <rect x="120" y="220" width="560" height="180" rx="80" fill="#ffffff22"/>
+  <text x="80" y="520" fill="#ffffffcc" font-size="36" font-family="Bahnschrift, Segoe UI, sans-serif">Placeholder 08</text>
+</svg>

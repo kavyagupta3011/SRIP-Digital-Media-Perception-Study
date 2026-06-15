@@ -1,0 +1,16 @@
+backend/.env
+backend/data/users.json
+backend/data/notifications.json
+backend/data/shared_posts.json
+backend/data/messages.json
+backend/data/responses.csv
+backend/data/participants.csv
+backend/data/dropouts.csv
+frontend/node_modules
+frontend/dist
+**/__pycache__/
+*.pyc
+*.db
+backend/data/*.lock
+.DS_Store
+Thumbs.db

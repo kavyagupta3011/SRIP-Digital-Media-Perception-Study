@@ -1,0 +1,110 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+  font-family: "Bahnschrift", "Segoe UI Variable", "Segoe UI", "Trebuchet MS", sans-serif;
+  background: radial-gradient(1200px 600px at 10% -10%, #eff4fb 0%, #edf2f7 54%),
+    radial-gradient(900px 500px at 90% 10%, #e8eef8 0%, #edf2f7 60%),
+    linear-gradient(180deg, #f4f7fb 0%, #edf2f7 100%);
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: transparent;
+  letter-spacing: 0.1px;
+}
+
+.srip-panel {
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  background: rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(22px);
+  box-shadow: 0 16px 40px -28px rgba(15, 23, 42, 0.32);
+  padding: 24px;
+}
+
+.srip-eyebrow {
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.26em;
+  text-transform: uppercase;
+  color: rgb(100 116 139);
+}
+
+.srip-input {
+  width: 100%;
+  border-radius: 1rem;
+  border: 1px solid rgb(226 232 240);
+  background: white;
+  padding: 0.75rem 1rem;
+  font-size: 0.875rem;
+  outline: none;
+  transition: border-color 150ms ease, box-shadow 150ms ease;
+}
+
+.srip-input:focus {
+  border-color: rgb(15 23 42);
+  box-shadow: 0 0 0 3px rgba(15, 23, 42, 0.08);
+}
+
+.srip-field {
+  display: grid;
+  gap: 0.5rem;
+  font-size: 0.875rem;
+  color: rgb(15 23 42);
+}
+
+.srip-field span {
+  font-weight: 600;
+}
+
+.srip-spinner {
+  height: 1.25rem;
+  width: 1.25rem;
+  border-radius: 999px;
+  border: 2px solid rgb(203 213 225);
+  border-top-color: rgb(37 99 235);
+  animation: sripSpin 0.8s linear infinite;
+}
+
+.srip-feed-card {
+  border-radius: 1.75rem;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 12px 34px -22px rgba(15, 23, 42, 0.32);
+  border: 1px solid rgba(15, 23, 42, 0.08);
+}
+
+.srip-feed-card textarea,
+.srip-feed-card input,
+.srip-feed-card button,
+.srip-feed-card select {
+  font-family: inherit;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.55);
+  border-radius: 999px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+@keyframes sripSpin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
