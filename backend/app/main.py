@@ -29,19 +29,24 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = BASE_DIR / "data"
 DATASET_DIR = DATA_DIR / "dataset"
 MANIFEST_PATH = DATA_DIR / "dataset_manifest.csv"
-PARTICIPANTS_CSV = DATA_DIR / "participants.csv"
-RESPONSES_CSV = DATA_DIR / "responses.csv"
-USERS_JSON = DATA_DIR / "users.json"
-NOTIFICATIONS_JSON = DATA_DIR / "notifications.json"
-SHARED_POSTS_JSON = DATA_DIR / "shared_posts.json"
-MESSAGES_JSON = DATA_DIR / "messages.json"
-DROPOUTS_CSV = DATA_DIR / "dropouts.csv"
+
+# Dynamic data (user data, responses) goes to STORE_DIR which is the persistent
+# volume in production (/app/store) and falls back to DATA_DIR locally.
+_store_env = os.getenv("STORE_DIR", "").strip()
+STORE_DIR = Path(_store_env) if _store_env else DATA_DIR
+STORE_DIR.mkdir(parents=True, exist_ok=True)
+
+PARTICIPANTS_CSV = STORE_DIR / "participants.csv"
+RESPONSES_CSV = STORE_DIR / "responses.csv"
+USERS_JSON = STORE_DIR / "users.json"
+NOTIFICATIONS_JSON = STORE_DIR / "notifications.json"
+SHARED_POSTS_JSON = STORE_DIR / "shared_posts.json"
+MESSAGES_JSON = STORE_DIR / "messages.json"
+DROPOUTS_CSV = STORE_DIR / "dropouts.csv"
 ENV_PATH = BASE_DIR / ".env"
 JWT_ALGORITHM = "HS256"
 OTP_MINUTES = 10
 
-# Ensure data directories exist (important on first boot with empty volume)
-DATA_DIR.mkdir(parents=True, exist_ok=True)
 DATASET_DIR.mkdir(parents=True, exist_ok=True)
 
 
