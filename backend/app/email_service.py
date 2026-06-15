@@ -28,7 +28,7 @@ def send_otp_email(to_email: str, otp: str, name: str) -> bool:
       print(f"RESEND_API_KEY not set — OTP for {to_email}: {otp}")
       return False
 
-    smtp_email = os.getenv("SMTP_EMAIL", "onboarding@resend.dev").strip()
+    smtp_email = "onboarding@resend.dev"
 
     html_body = f"""
     <html><body style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
@@ -75,7 +75,7 @@ def send_share_email(
     if not resend.api_key:
       return False
 
-    smtp_email = os.getenv("SMTP_EMAIL", "onboarding@resend.dev").strip()
+    smtp_email = "onboarding@resend.dev"
 
     if study_completed:
       subject = f"{sharer_name} shared a post with you"
