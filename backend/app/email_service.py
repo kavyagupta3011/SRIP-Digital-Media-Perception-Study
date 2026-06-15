@@ -1,9 +1,6 @@
 from __future__ import annotations
 
 import os
-import smtplib
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -25,16 +22,13 @@ def send_otp_email(to_email: str, otp: str, name: str) -> bool:
     return True
 
   try:
-    smtp_email = os.getenv("SMTP_EMAIL", "").strip()
-    smtp_password = os.getenv("SMTP_PASSWORD", "").strip()
-    if not smtp_email or not smtp_password:
-      print(f"SMTP not configured — OTP for {to_email}: {otp}")
+    import resend
+    resend.api_key = os.getenv("RESEND_API_KEY", "").strip()
+    if not resend.api_key:
+      print(f"RESEND_API_KEY not set — OTP for {to_email}: {otp}")
       return False
 
-    msg = MIMEMultipart("alternative")
-    msg["Subject"] = "Your OTP for the Digital Media Perception Study"
-    msg["From"] = f"SRIP Research Team <{smtp_email}>"
-    msg["To"] = to_email
+    smtp_email = os.getenv("SMTP_EMAIL", "onboarding@resend.dev").strip()
 
     html_body = f"""
     <html><body style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
@@ -51,11 +45,12 @@ def send_otp_email(to_email: str, otp: str, name: str) -> bool:
     </body></html>
     """
 
-    msg.attach(MIMEText(html_body, "html"))
-
-    with smtplib.SMTP_SSL(os.getenv("SMTP_HOST", "smtp.gmail.com"), int(os.getenv("SMTP_PORT", "465"))) as server:
-      server.login(smtp_email, smtp_password)
-      server.sendmail(smtp_email, to_email, msg.as_string())
+    resend.Emails.send({
+      "from": f"SRIP Research Team <{smtp_email}>",
+      "to": [to_email],
+      "subject": "Your OTP for the Digital Media Perception Study",
+      "html": html_body,
+    })
     return True
   except Exception as exc:
     print(f"Email send failed: {exc}")
@@ -75,10 +70,12 @@ def send_share_email(
     return True
 
   try:
-    smtp_email = os.getenv("SMTP_EMAIL", "").strip()
-    smtp_password = os.getenv("SMTP_PASSWORD", "").strip()
-    if not smtp_email or not smtp_password:
+    import resend
+    resend.api_key = os.getenv("RESEND_API_KEY", "").strip()
+    if not resend.api_key:
       return False
+
+    smtp_email = os.getenv("SMTP_EMAIL", "onboarding@resend.dev").strip()
 
     if study_completed:
       subject = f"{sharer_name} shared a post with you"
@@ -95,14 +92,12 @@ def send_share_email(
         f"Complete the study to see it: {study_link}\n"
       )
 
-    msg = MIMEText(body)
-    msg["Subject"] = subject
-    msg["From"] = smtp_email
-    msg["To"] = to_email
-
-    with smtplib.SMTP_SSL(os.getenv("SMTP_HOST", "smtp.gmail.com"), int(os.getenv("SMTP_PORT", "465"))) as server:
-      server.login(smtp_email, smtp_password)
-      server.send_message(msg)
+    resend.Emails.send({
+      "from": smtp_email,
+      "to": [to_email],
+      "subject": subject,
+      "text": body,
+    })
     return True
   except Exception as exc:
     print(f"Share email failed: {exc}")
