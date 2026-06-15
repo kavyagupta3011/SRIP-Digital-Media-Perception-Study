@@ -544,7 +544,7 @@ def _validate_csv_columns(csv_path: Path, expected_columns: list[str]) -> bool:
 
 
 def ensure_runtime_files() -> None:
-  DATA_DIR.mkdir(parents=True, exist_ok=True)
+  STORE_DIR.mkdir(parents=True, exist_ok=True)
   if not _validate_csv_columns(PARTICIPANTS_CSV, PARTICIPANT_COLUMNS):
     backup = PARTICIPANTS_CSV.with_suffix(".csv.bak")
     if PARTICIPANTS_CSV.exists():

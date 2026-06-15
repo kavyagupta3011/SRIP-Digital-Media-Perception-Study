@@ -1,6 +1,7 @@
 {
   "rewrites": [
     { "source": "/api/:path*", "destination": "https://srip-digital-media-perception-study-production.up.railway.app/api/:path*" },
-    { "source": "/images/:path*", "destination": "https://srip-digital-media-perception-study-production.up.railway.app/images/:path*" }
+    { "source": "/images/:path*", "destination": "https://srip-digital-media-perception-study-production.up.railway.app/images/:path*" },
+    { "source": "/(.*)", "destination": "/index.html" }
   ]
 }
