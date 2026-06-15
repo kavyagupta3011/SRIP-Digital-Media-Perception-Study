@@ -40,6 +40,10 @@ ENV_PATH = BASE_DIR / ".env"
 JWT_ALGORITHM = "HS256"
 OTP_MINUTES = 10
 
+# Ensure data directories exist (important on first boot with empty volume)
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+DATASET_DIR.mkdir(parents=True, exist_ok=True)
+
 
 
 # -- Signal Detection Theory helpers -----------------------------------------
@@ -159,6 +163,7 @@ app.add_middleware(
   allow_headers=["*"],
 )
 
+DATASET_DIR.mkdir(parents=True, exist_ok=True)
 app.mount("/images", StaticFiles(directory=str(DATASET_DIR)), name="images")
 
 session_store: dict[str, list[dict[str, Any]]] = {}
