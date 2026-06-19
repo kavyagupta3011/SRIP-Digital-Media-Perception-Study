@@ -88,7 +88,7 @@ LABEL_SIZES = [0.0, 0.1, 0.25, 0.5, 1.0]
 
 PARTICIPANT_COLUMNS = [
   "session_id", "user_id", "submitted_at", "survey_start_time", "total_duration_minutes", "hour_of_day",
-  "name", "email", "roll_no", "age", "gender", "ai_frequency", "ai_confidence",
+  "name", "email", "age", "gender", "ai_frequency", "ai_confidence",
   "attention_check_passed",
   "total_images", "total_correct", "overall_accuracy",
   "ai_images", "ai_correct", "ai_detection_rate",
@@ -866,7 +866,6 @@ def build_participant_row(submit_payload: SubmitPayload, metrics: dict[str, Any]
     "hour_of_day": hour_of_day,
     "name": participant.name,
     "email": participant.email,
-    "roll_no": participant.roll_no,
     "age": participant.age,
     "gender": participant.gender,
     "ai_frequency": participant.ai_frequency,

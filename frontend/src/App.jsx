@@ -167,7 +167,7 @@ function DemographicsPage({ participant, setParticipant, onContinue }) {
 
   const submit = (event) => {
     event.preventDefault();
-    const required = [participant.name, participant.email, participant.roll_no, participant.age, participant.gender, participant.ai_frequency, participant.ai_confidence];
+    const required = [participant.name, participant.email, participant.age, participant.gender, participant.ai_frequency, participant.ai_confidence];
     if (required.some((value) => value === "" || value === null || value === undefined)) {
       setError("Please complete all fields before continuing.");
       return;
@@ -181,14 +181,10 @@ function DemographicsPage({ participant, setParticipant, onContinue }) {
       <Title eyebrow="Step 2 of 8" title="Tell us a little about yourself" description="These fields are required and will be saved with your survey responses." />
       <form onSubmit={submit} className="mt-8 space-y-6">
         <div className="grid gap-4 md:grid-cols-2">
-          {/* name and roll_no are locked — set during sign-in */}
+          {/* name and email are locked — set during sign-in */}
           <div className="srip-input flex items-center gap-2 bg-slate-50 text-slate-500 cursor-not-allowed select-none">
             <span className="text-slate-400 text-xs font-medium uppercase tracking-wide mr-1">Name</span>
             <span className="text-slate-800 font-medium">{participant.name}</span>
-          </div>
-          <div className="srip-input flex items-center gap-2 bg-slate-50 text-slate-500 cursor-not-allowed select-none">
-            <span className="text-slate-400 text-xs font-medium uppercase tracking-wide mr-1">Roll No</span>
-            <span className="text-slate-800 font-medium">{participant.roll_no || <span className="italic text-slate-400">not provided</span>}</span>
           </div>
           <div className="srip-input flex items-center gap-2 bg-slate-50 text-slate-500 cursor-not-allowed select-none">
             <span className="text-slate-400 text-xs font-medium uppercase tracking-wide mr-1">Email</span>
@@ -199,7 +195,7 @@ function DemographicsPage({ participant, setParticipant, onContinue }) {
             <option value="">Gender</option>
             {GENDER_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}
           </select>
-          <div className="rounded-2xl border border-slate-200 px-4 py-3 text-sm text-slate-500">Name, Roll No &amp; Email are locked from sign-in</div>
+          <div className="rounded-2xl border border-slate-200 px-4 py-3 text-sm text-slate-500">Name &amp; Email are locked from sign-in</div>
         </div>
         <div className="grid gap-5">
           <div className="rounded-[22px] border border-slate-200 p-5">
@@ -239,7 +235,6 @@ function InstructionsPage({ onContinue }) {
 function AuthPage({ onAuthenticated, onCompletedStudy, onDevMode }) {
   const [email, setEmail]     = useState("");
   const [name, setName]       = useState("");
-  const [rollNo, setRollNo]   = useState("");
   const [otp, setOtp]         = useState("");
   // "email" → "info" (new) or "otp" (existing)
   const [stage, setStage]     = useState("email");
@@ -277,7 +272,7 @@ function AuthPage({ onAuthenticated, onCompletedStudy, onDevMode }) {
     const res  = await fetch("/api/auth/login", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email: email.trim(), name: isNewUser ? name : "", roll_no: isNewUser ? rollNo : "" }),
+      body: JSON.stringify({ email: email.trim(), name: isNewUser ? name : "" }),
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || "Could not send OTP.");
@@ -316,13 +311,12 @@ function AuthPage({ onAuthenticated, onCompletedStudy, onDevMode }) {
         await fetch("/api/auth/update-profile", {
           method: "PATCH",
           headers: { "Content-Type": "application/json", "Authorization": `Bearer ${data.token}` },
-          body: JSON.stringify({ name, roll_no: rollNo }),
+          body: JSON.stringify({ name }),
         });
       }
 
       const displayName = isNew ? name : (data.name || "");
-      const displayRoll = isNew ? rollNo : (data.roll_no || "");
-      const userObj = { user_id: data.user_id, name: displayName, roll_no: displayRoll, email: email.trim(), study_completed: data.study_completed };
+      const userObj = { user_id: data.user_id, name: displayName, email: email.trim(), study_completed: data.study_completed };
       localStorage.setItem("srip_token", data.token);
       localStorage.setItem("srip_user", JSON.stringify(userObj));
 
@@ -342,10 +336,10 @@ function AuthPage({ onAuthenticated, onCompletedStudy, onDevMode }) {
       {/* ── Stage: email ── */}
       {stage === "email" ? (
         <>
-          <Title eyebrow="Research study" title="Welcome" description="Enter your institutional email to get started." />
+          <Title eyebrow="Research study" title="Welcome" description="Enter your email to get started." />
           {completedNotice ? <p className="mt-4 rounded-2xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800">{completedNotice}</p> : null}
           <form className="mt-8 space-y-4" onSubmit={checkEmail}>
-            <input className="srip-input" placeholder="you@institution.edu" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required autoComplete="off" />
+            <input className="srip-input" placeholder="you@email.com" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required autoComplete="off" />
             <Button type="submit" disabled={loading} className="w-full">{loading ? "Checking…" : "Next →"}</Button>
           </form>
         </>
@@ -357,7 +351,6 @@ function AuthPage({ onAuthenticated, onCompletedStudy, onDevMode }) {
           <Title eyebrow="New participant" title="Create your profile" description="This information is saved once and cannot be changed later." />
           <form className="mt-8 space-y-4" onSubmit={submitInfo}>
             <input className="srip-input" placeholder="Full name" value={name} onChange={(e) => setName(e.target.value)} autoComplete="off" required />
-            <input className="srip-input" placeholder="Roll No / Student ID" value={rollNo} onChange={(e) => setRollNo(e.target.value)} autoComplete="off" />
             <Button type="submit" disabled={loading} className="w-full">{loading ? "Sending OTP…" : "Send OTP →"}</Button>
             <button type="button" className="w-full text-sm text-slate-400 hover:text-slate-600" onClick={() => { setStage("email"); setError(""); setIsNew(false); }}>← Back</button>
           </form>
