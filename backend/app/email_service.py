@@ -63,10 +63,17 @@ def send_share_email(
   sharer_name: str,
   study_completed: bool,
   feed_caption: str = "",
+  share_count: int = 1,
   study_link: str = "http://localhost:5173",
 ) -> bool:
+  """Send ONE email summarizing how many posts a sharer shared with a recipient.
+
+  Callers should batch multiple shares from the same sharer to the same
+  recipient and call this once with the total `share_count`, rather than
+  calling it once per share.
+  """
   if is_dev_mode():
-    print(f"DEV MODE — Share email to {to_email} from {sharer_name}")
+    print(f"DEV MODE — Share email to {to_email} from {sharer_name} ({share_count} post(s))")
     return True
 
   try:
@@ -76,20 +83,28 @@ def send_share_email(
       return False
 
     smtp_email = "notify@digitalmediastudy.online"
+    post_word = "post" if share_count == 1 else "posts"
 
     if study_completed:
-      subject = f"{sharer_name} shared a post with you"
+      subject = (
+        f"{sharer_name} shared a post with you" if share_count == 1
+        else f"{sharer_name} shared {share_count} posts with you"
+      )
       body = (
         f"Hi {recipient_name or 'there'},\n\n"
-        f"Check out what {sharer_name} shared with you in the SRIP Community Wall: {study_link}\n\n"
-        f"Caption: {feed_caption}\n"
+        f"{sharer_name} shared {share_count} {post_word} with you in the SRIP Community Wall.\n"
+        f"View them here: {study_link}\n\n"
+        + (f"Latest caption: {feed_caption}\n" if feed_caption else "")
       )
     else:
-      subject = "Someone shared a post with you on SRIP Study"
+      subject = (
+        "Someone shared a post with you on SRIP Study" if share_count == 1
+        else f"Someone shared {share_count} posts with you on SRIP Study"
+      )
       body = (
         f"Hi {recipient_name or 'there'},\n\n"
-        f"{sharer_name} shared a post with you in the Digital Media Perception Study.\n"
-        f"Complete the study to see it: {study_link}\n"
+        f"{sharer_name} shared {share_count} {post_word} with you in the Digital Media Perception Study.\n"
+        f"Complete the study to see {'it' if share_count == 1 else 'them'}: {study_link}\n"
       )
 
     resend.Emails.send({

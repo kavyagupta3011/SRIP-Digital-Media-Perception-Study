@@ -4,6 +4,7 @@ import json
 import os
 import random
 import string
+import threading
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -1066,6 +1067,79 @@ def queue_notification(recipient_email: str, notification: dict[str, Any]) -> No
   save_notifications_store(notifications)
 
 
+# --- Batched "share" emails -------------------------------------------------
+# If the same sender shares several posts with the same recipient in quick
+# succession, we don't want one email per share. We debounce per
+# (sharer_id, recipient_id) pair: every new share resets a short timer; when
+# the timer finally fires (no new shares from that sharer to that recipient
+# for SHARE_EMAIL_BATCH_SECONDS), we send exactly one email summarizing how
+# many posts were shared since the last email. A different sharer to the
+# same recipient gets their own independent timer/email.
+SHARE_EMAIL_BATCH_SECONDS = float(os.getenv("SHARE_EMAIL_BATCH_SECONDS", "120"))
+_pending_share_emails: dict[tuple[str, str], dict[str, Any]] = {}
+_share_email_timers: dict[tuple[str, str], threading.Timer] = {}
+_share_email_lock = threading.Lock()
+
+
+def _flush_share_email(key: tuple[str, str]) -> None:
+  with _share_email_lock:
+    pending = _pending_share_emails.pop(key, None)
+    _share_email_timers.pop(key, None)
+  if not pending:
+    return
+  recipient = get_user_by_id(pending["recipient_id"])
+  study_completed = bool(recipient.get("study_completed")) if recipient else pending["recipient_study_completed"]
+  try:
+    send_share_email(
+      to_email=pending["recipient_email"],
+      recipient_name=pending["recipient_name"],
+      sharer_name=pending["sharer_name"],
+      study_completed=study_completed,
+      feed_caption=pending["latest_caption"],
+      share_count=pending["count"],
+      study_link=STUDY_LINK,
+    )
+  except Exception as exc:
+    print(f"Batched share email failed: {exc}")
+
+
+def queue_share_email(
+  sharer_id: str,
+  sharer_name: str,
+  recipient_id: str,
+  recipient_email: str,
+  recipient_name: str,
+  recipient_study_completed: bool,
+  feed_caption: str,
+) -> None:
+  key = (str(sharer_id), str(recipient_id))
+  with _share_email_lock:
+    entry = _pending_share_emails.get(key)
+    if entry is None:
+      entry = {
+        "sharer_name": sharer_name,
+        "recipient_id": recipient_id,
+        "recipient_email": recipient_email,
+        "recipient_name": recipient_name,
+        "recipient_study_completed": recipient_study_completed,
+        "count": 0,
+        "latest_caption": "",
+      }
+      _pending_share_emails[key] = entry
+    entry["count"] += 1
+    entry["recipient_study_completed"] = recipient_study_completed
+    if feed_caption:
+      entry["latest_caption"] = feed_caption
+
+    existing_timer = _share_email_timers.get(key)
+    if existing_timer is not None:
+      existing_timer.cancel()
+    timer = threading.Timer(SHARE_EMAIL_BATCH_SECONDS, _flush_share_email, args=(key,))
+    timer.daemon = True
+    _share_email_timers[key] = timer
+    timer.start()
+
+
 def apply_share_to_response_rows(rows: list[dict[str, Any]], image_id: str, shared_with_count: int, share_recipients: list[str], wall_likes: int) -> list[dict[str, Any]]:
   updated_rows = []
   recipients_text = ",".join(share_recipients)
@@ -1294,8 +1368,15 @@ def social_share(payload: SocialSharePayload, current_user: dict[str, Any] = Dep
       },
     )
 
-    # Share emails are disabled — in-app notification + message above is enough.
-    # Only OTP emails should go out via email.
+    queue_share_email(
+      sharer_id=str(current_user["user_id"]),
+      sharer_name=current_user.get("name", ""),
+      recipient_id=str(recipient["user_id"]),
+      recipient_email=str(recipient["email"]),
+      recipient_name=str(recipient.get("name", "")),
+      recipient_study_completed=bool(recipient.get("study_completed")),
+      feed_caption=payload.feed_caption or "",
+    )
 
   shared_posts = load_shared_posts()
   shared_post = {
