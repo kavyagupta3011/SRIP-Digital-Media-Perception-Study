@@ -1794,6 +1794,7 @@ def admin_reset(_: None = Depends(require_admin)) -> dict[str, str]:
   SHARED_POSTS_JSON.write_text("[]", encoding="utf-8")
   NOTIFICATIONS_JSON.write_text("{}", encoding="utf-8")
   MESSAGES_JSON.write_text("{}", encoding="utf-8")
+  USERS_JSON.write_text("{}", encoding="utf-8")
   session_store.clear()
   return {"status": "ok"}
 
