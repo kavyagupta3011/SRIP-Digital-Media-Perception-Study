@@ -1295,14 +1295,8 @@ def social_share(payload: SocialSharePayload, current_user: dict[str, Any] = Dep
       },
     )
 
-    send_share_email(
-      str(recipient["email"]),
-      str(recipient.get("name") or ""),
-      str(current_user.get("name") or "A participant"),
-      bool(recipient.get("study_completed", False)),
-      payload.feed_caption,
-      STUDY_LINK,
-    )
+    # Share emails are disabled — in-app notification + message above is enough.
+    # Only OTP emails should go out via email.
 
   shared_posts = load_shared_posts()
   shared_post = {
