@@ -90,9 +90,12 @@ def send_share_email(
         f"{sharer_name} shared a post with you" if share_count == 1
         else f"{sharer_name} shared {share_count} posts with you"
       )
+      intro_line = f"{sharer_name} shared {share_count} {post_word} with you in the SRIP Community Wall."
+      cta_text = "View them here"
+      caption_html = f'<p style="color: #666;">Latest caption: {feed_caption}</p>' if feed_caption else ""
       body = (
         f"Hi {recipient_name or 'there'},\n\n"
-        f"{sharer_name} shared {share_count} {post_word} with you in the SRIP Community Wall.\n"
+        f"{intro_line}\n"
         f"View them here: {study_link}\n\n"
         + (f"Latest caption: {feed_caption}\n" if feed_caption else "")
       )
@@ -101,17 +104,36 @@ def send_share_email(
         "Someone shared a post with you on SRIP Study" if share_count == 1
         else f"Someone shared {share_count} posts with you on SRIP Study"
       )
+      intro_line = f"{sharer_name} shared {share_count} {post_word} with you in the Digital Media Perception Study."
+      cta_text = f"Complete the study to see {'it' if share_count == 1 else 'them'}"
+      caption_html = ""
       body = (
         f"Hi {recipient_name or 'there'},\n\n"
-        f"{sharer_name} shared {share_count} {post_word} with you in the Digital Media Perception Study.\n"
+        f"{intro_line}\n"
         f"Complete the study to see {'it' if share_count == 1 else 'them'}: {study_link}\n"
       )
 
+    html_body = f"""
+    <html><body style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+    <h2 style="color: #1a1a18;">IIIT Bangalore — Digital Media Perception Study</h2>
+    <p>Hi {recipient_name or 'there'},</p>
+    <p>{intro_line}</p>
+    {caption_html}
+    <p style="margin: 24px 0;">
+      <a href="{study_link}" style="background: #185fa5; color: #fff; padding: 12px 20px; border-radius: 6px; text-decoration: none; font-weight: bold;">{cta_text}</a>
+    </p>
+    <p style="color: #666; font-size: 13px;">Or copy this link into your browser: {study_link}</p>
+    <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;">
+    <p style="color: #999; font-size: 12px;">Research Team, IIIT Bangalore</p>
+    </body></html>
+    """
+
     resend.Emails.send({
-      "from": smtp_email,
+      "from": f"SRIP Research Team <{smtp_email}>",
       "to": [to_email],
       "subject": subject,
       "text": body,
+      "html": html_body,
     })
     return True
   except Exception as exc:
