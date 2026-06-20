@@ -1195,13 +1195,13 @@ def auth_start(payload: AuthStartPayload) -> dict[str, Any]:
   users = load_user_store()
   existing = users.get(normalized)
   user = upsert_user(payload.email, payload.name, payload.roll_no)
-  otp, emailed = queue_otp(user)
+  otp, _emailed = queue_otp(user)
   response = {
     "message": "OTP sent",
     "study_completed": bool(user.get("study_completed", False)),
     "existing_user": existing is not None,
   }
-  if is_dev_mode() or not emailed:
+  if is_dev_mode():
     response["dev_otp"] = otp
   return response
 
