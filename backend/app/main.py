@@ -172,9 +172,6 @@ app.add_middleware(
 DATASET_DIR.mkdir(parents=True, exist_ok=True)
 app.mount("/images", StaticFiles(directory=str(DATASET_DIR)), name="images")
 
-session_store: dict[str, list[dict[str, Any]]] = {}
-session_meta: dict[str, dict[str, Any]] = {}
-
 
 class ParticipantPayload(BaseModel):
   name: str
@@ -342,6 +339,36 @@ def save_json(path: Path, data: Any) -> None:
     os.replace(tmp, path)
 
 
+def update_json(path: Path, default: Any, mutate: Any) -> Any:
+  """Read-modify-write a JSON store under a SINGLE lock acquisition.
+
+  load_json() and save_json() each grab and release the lock on their own,
+  so a "load -> modify in Python -> save" sequence has a gap in between
+  where another worker process (we run 4, see Procfile) can do its own
+  load/modify/save and have its change silently overwritten once we save
+  our (now stale) copy -- a classic lost-update race. This closes that gap
+  by holding the lock for the entire read-modify-write, so two simultaneous
+  requests touching the same store (e.g. two people sending messages, two
+  shares landing on the same recipient's notifications) can't clobber each
+  other. `mutate(data)` is called with the loaded data and should mutate it
+  in place; its return value (if any) is passed back to the caller, and any
+  exception raised inside `mutate` aborts before anything is written.
+  """
+  with _lock_for(path):
+    if path.exists():
+      try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+      except json.JSONDecodeError:
+        data = default
+    else:
+      data = default
+    result = mutate(data)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+    os.replace(tmp, path)
+    return result
+
+
 def generate_otp() -> str:
   return "".join(random.choices(string.digits, k=6))
 
@@ -434,11 +461,12 @@ def save_messages_store(messages: dict[str, list[dict[str, Any]]]) -> None:
 
 
 def append_message(thread_id: str, message: dict[str, Any]) -> None:
-  messages = load_messages_store()
-  bucket = messages.get(thread_id) or []
-  bucket.append(message)
-  messages[thread_id] = bucket
-  save_messages_store(messages)
+  def _mutate(messages: dict[str, Any]) -> None:
+    bucket = messages.get(thread_id) or []
+    bucket.append(message)
+    messages[thread_id] = bucket
+
+  update_json(MESSAGES_JSON, {}, _mutate)
 
 
 def require_admin(password: str = Header(None, alias="X-Admin-Password")) -> None:
@@ -482,47 +510,51 @@ def get_user_by_id(user_id: str) -> dict[str, Any] | None:
 
 def upsert_user(email: str, name: str, roll_no: str) -> dict[str, Any]:
   normalized_email = normalize_email(email)
-  users = load_user_store()
-  user = users.get(normalized_email)
-  if not user:
-    user = {
-      "user_id": str(uuid.uuid4()),
-      "email": normalized_email,
-      "name": name.strip(),
-      "roll_no": roll_no.strip(),
-      "registered_at": iso_now(),
-      "last_active": iso_now(),
-      "study_completed": False,
-      "otp": "",
-      "otp_expires_at": "",
-      "session_count": 0,
-      "device_info": "",
-    }
-  else:
-    if name.strip():
-      user["name"] = name.strip()
-    if roll_no.strip():
-      user["roll_no"] = roll_no.strip()
-  user["last_active"] = iso_now()
-  users[normalized_email] = user
-  save_user_store(users)
-  return user
+
+  def _mutate(users: dict[str, Any]) -> dict[str, Any]:
+    user = users.get(normalized_email)
+    if not user:
+      user = {
+        "user_id": str(uuid.uuid4()),
+        "email": normalized_email,
+        "name": name.strip(),
+        "roll_no": roll_no.strip(),
+        "registered_at": iso_now(),
+        "last_active": iso_now(),
+        "study_completed": False,
+        "otp": "",
+        "otp_expires_at": "",
+        "session_count": 0,
+        "device_info": "",
+      }
+    else:
+      if name.strip():
+        user["name"] = name.strip()
+      if roll_no.strip():
+        user["roll_no"] = roll_no.strip()
+    user["last_active"] = iso_now()
+    users[normalized_email] = user
+    return user
+
+  return update_json(USERS_JSON, {}, _mutate)
 
 
 def queue_otp(user: dict[str, Any]) -> tuple[str, bool]:
   otp = generate_otp()
+  expires_at = (now_utc() + timedelta(minutes=OTP_MINUTES)).isoformat()
+  email = user["email"]
+
+  def _mutate(users: dict[str, Any]) -> None:
+    record = users.get(email, user)
+    record["otp"] = otp
+    record["otp_expires_at"] = expires_at
+    users[email] = record
+
+  update_json(USERS_JSON, {}, _mutate)
   user["otp"] = otp
-  user["otp_expires_at"] = (now_utc() + timedelta(minutes=OTP_MINUTES)).isoformat()
-  users = load_user_store()
-  users[user["email"]] = user
-  save_user_store(users)
+  user["otp_expires_at"] = expires_at
   emailed = send_otp_email(user["email"], otp, str(user.get("name") or ""))
   return otp, emailed
-
-
-def require_session(session_id: str) -> None:
-  if session_id not in session_store:
-    raise HTTPException(status_code=404, detail="Session not found")
 
 
 def get_notification_bucket(notifications: dict[str, list[dict[str, Any]]], email: str) -> list[dict[str, Any]]:
@@ -665,7 +697,8 @@ def compact_numbers(values: list[float | None]) -> list[float]:
 
 def append_row(csv_path: Path, row: dict[str, Any], columns: list[str]) -> None:
   frame = pd.DataFrame([row], columns=columns)
-  frame.to_csv(csv_path, mode="a", index=False, header=False)
+  with _lock_for(csv_path):
+    frame.to_csv(csv_path, mode="a", index=False, header=False)
 
 
 def compute_metrics(submit_payload: SubmitPayload) -> dict[str, Any]:
@@ -1060,11 +1093,12 @@ def build_wall_post(post: dict[str, Any], current_user_id: str) -> dict[str, Any
 
 
 def queue_notification(recipient_email: str, notification: dict[str, Any]) -> None:
-  notifications = load_notifications_store()
-  bucket = get_notification_bucket(notifications, recipient_email)
-  bucket.append(notification)
-  notifications[recipient_email] = bucket
-  save_notifications_store(notifications)
+  def _mutate(notifications: dict[str, Any]) -> None:
+    bucket = get_notification_bucket(notifications, recipient_email)
+    bucket.append(notification)
+    notifications[recipient_email] = bucket
+
+  update_json(NOTIFICATIONS_JSON, {}, _mutate)
 
 
 # --- Batched "share" emails -------------------------------------------------
@@ -1192,25 +1226,29 @@ def auth_login(payload: AuthStartPayload) -> dict[str, Any]:
 @app.post("/api/auth/verify")
 def auth_verify(payload: AuthVerifyPayload) -> dict[str, Any]:
   email = normalize_email(payload.email)
-  users = load_user_store()
-  user = users.get(email)
-  if not user:
-    raise HTTPException(status_code=404, detail="User not found")
+  verified_user: dict[str, Any] = {}
 
-  stored_otp = str(user.get("otp") or "")
-  otp_expires_at = str(user.get("otp_expires_at") or "")
-  if not stored_otp or not otp_expires_at:
-    raise HTTPException(status_code=400, detail="OTP expired or not requested")
-  if payload.otp.strip() != stored_otp:
-    raise HTTPException(status_code=400, detail="Invalid OTP")
-  if parse_iso_datetime(otp_expires_at) < now_utc():
-    raise HTTPException(status_code=400, detail="OTP expired")
+  def _mutate(users: dict[str, Any]) -> None:
+    user = users.get(email)
+    if not user:
+      raise HTTPException(status_code=404, detail="User not found")
 
-  user["otp"] = ""
-  user["otp_expires_at"] = ""
-  users[email] = user
-  save_user_store(users)
-  return build_auth_response(user)
+    stored_otp = str(user.get("otp") or "")
+    otp_expires_at = str(user.get("otp_expires_at") or "")
+    if not stored_otp or not otp_expires_at:
+      raise HTTPException(status_code=400, detail="OTP expired or not requested")
+    if payload.otp.strip() != stored_otp:
+      raise HTTPException(status_code=400, detail="Invalid OTP")
+    if parse_iso_datetime(otp_expires_at) < now_utc():
+      raise HTTPException(status_code=400, detail="OTP expired")
+
+    user["otp"] = ""
+    user["otp_expires_at"] = ""
+    users[email] = user
+    verified_user.update(user)
+
+  update_json(USERS_JSON, {}, _mutate)
+  return build_auth_response(verified_user)
 
 
 @app.get("/api/auth/me")
@@ -1226,33 +1264,37 @@ def auth_me(current_user: dict[str, Any] = Depends(get_current_user)) -> dict[st
 
 @app.patch("/api/auth/update-profile")
 def auth_update_profile(data: dict, current_user: dict[str, Any] = Depends(get_current_user)) -> dict[str, Any]:
-  users = load_user_store()
   email = normalize_email(str(current_user.get("email") or ""))
-  user = users.get(email)
-  if not user:
-    raise HTTPException(status_code=404, detail="User not found")
   name = str(data.get("name") or "").strip()
   roll_no = str(data.get("roll_no") or "").strip()
-  if name:
-    user["name"] = name
-  if roll_no:
-    user["roll_no"] = roll_no
-  users[email] = user
-  save_user_store(users)
+
+  def _mutate(users: dict[str, Any]) -> None:
+    user = users.get(email)
+    if not user:
+      raise HTTPException(status_code=404, detail="User not found")
+    if name:
+      user["name"] = name
+    if roll_no:
+      user["roll_no"] = roll_no
+    users[email] = user
+
+  update_json(USERS_JSON, {}, _mutate)
   return {"ok": True}
 
 
 @app.post("/api/auth/heartbeat")
 def auth_heartbeat(payload: HeartbeatPayload, current_user: dict[str, Any] = Depends(get_current_user)) -> dict[str, str]:
-  users = load_user_store()
   email = normalize_email(str(current_user.get("email") or ""))
-  user = users.get(email)
-  if user:
-    user["last_active"] = iso_now()
-    if payload.device_info:
-      user["device_info"] = payload.device_info
-    users[email] = user
-    save_user_store(users)
+
+  def _mutate(users: dict[str, Any]) -> None:
+    user = users.get(email)
+    if user:
+      user["last_active"] = iso_now()
+      if payload.device_info:
+        user["device_info"] = payload.device_info
+      users[email] = user
+
+  update_json(USERS_JSON, {}, _mutate)
   return {"status": "ok"}
 
 
@@ -1294,18 +1336,14 @@ def create_session(
 
   session_id = str(uuid.uuid4())
   images = build_session_images(session_id)
-  session_store[session_id] = images
-  session_meta[session_id] = {
-    "user_id": current_user["user_id"],
-    "session_start_time": iso_now(),
-    "device_info": str(request.headers.get("user-agent") or ""),
-  }
 
-  users = load_user_store()
   email = normalize_email(str(current_user.get("email") or ""))
-  if email in users:
-    users[email]["session_count"] = int(users[email].get("session_count") or 0) + 1
-    save_user_store(users)
+
+  def _mutate(users: dict[str, Any]) -> None:
+    if email in users:
+      users[email]["session_count"] = int(users[email].get("session_count") or 0) + 1
+
+  update_json(USERS_JSON, {}, _mutate)
 
   return {"session_id": session_id, "images": images, "user_id": current_user["user_id"]}
 
@@ -1313,9 +1351,13 @@ def create_session(
 @app.get("/api/recall-images")
 def recall_images(session_id: str = Query(..., min_length=1), current_user: dict[str, Any] = Depends(get_current_user)) -> dict[str, Any]:
   _ = current_user
-  images = session_store.get(session_id)
-  if images is None:
-    raise HTTPException(status_code=404, detail="Session not found")
+  # NOTE: build_session_images() seeds its RNG with session_id, so it always
+  # regenerates the exact same image list for a given session_id. We
+  # recompute rather than reading from the in-memory session_store, because
+  # with multiple uvicorn workers (see Procfile) a participant's later
+  # request can land on a different worker process than the one that
+  # created their session — an in-memory dict would wrongly 404 in that case.
+  images = build_session_images(session_id)
   return {"session_id": session_id, "images": images}
 
 
@@ -1378,7 +1420,6 @@ def social_share(payload: SocialSharePayload, current_user: dict[str, Any] = Dep
       feed_caption=payload.feed_caption or "",
     )
 
-  shared_posts = load_shared_posts()
   shared_post = {
     "post_id": shared_post_id,
     "shared_by_user_id": current_user["user_id"],
@@ -1395,8 +1436,11 @@ def social_share(payload: SocialSharePayload, current_user: dict[str, Any] = Dep
     "participant_verdict_at_share_time": sharer_verdict,
     "category_id": payload.category_id,
   }
-  shared_posts.append(shared_post)
-  save_shared_posts(shared_posts)
+
+  def _append_post(shared_posts: list[dict[str, Any]]) -> None:
+    shared_posts.append(shared_post)
+
+  update_json(SHARED_POSTS_JSON, [], _append_post)
 
   return {
     "status": "ok",
@@ -1418,25 +1462,27 @@ def social_wall(current_user: dict[str, Any] = Depends(get_current_user)) -> dic
 
 @app.post("/api/social/like")
 def social_like(payload: LikePayload, current_user: dict[str, Any] = Depends(get_current_user)) -> dict[str, Any]:
-  shared_posts = load_shared_posts()
-  matched_post = None
-  for post in shared_posts:
-    if post.get("post_id") == payload.post_id:
-      matched_post = post
-      likes = list(post.get("likes") or [])
-      user_id = str(current_user["user_id"])
-      if user_id in likes:
-        likes.remove(user_id)
-        liked = False
-      else:
-        likes.append(user_id)
-        liked = True
-      post["likes"] = likes
-      post["like_count"] = len(likes)
-      save_shared_posts(shared_posts)
-      return {"liked": liked, "like_count": len(likes)}
-  if matched_post is None:
+  user_id = str(current_user["user_id"])
+  result: dict[str, Any] = {}
+
+  def _mutate(shared_posts: list[dict[str, Any]]) -> None:
+    for post in shared_posts:
+      if post.get("post_id") == payload.post_id:
+        likes = list(post.get("likes") or [])
+        if user_id in likes:
+          likes.remove(user_id)
+          result["liked"] = False
+        else:
+          likes.append(user_id)
+          result["liked"] = True
+        post["likes"] = likes
+        post["like_count"] = len(likes)
+        result["like_count"] = len(likes)
+        return
     raise HTTPException(status_code=404, detail="Post not found")
+
+  update_json(SHARED_POSTS_JSON, [], _mutate)
+  return {"liked": result["liked"], "like_count": result["like_count"]}
 
 
 @app.get("/api/social/notifications")
@@ -1449,17 +1495,21 @@ def social_notifications(current_user: dict[str, Any] = Depends(get_current_user
 
 @app.post("/api/social/notifications/read")
 def social_notifications_read(payload: NotificationsReadPayload, current_user: dict[str, Any] = Depends(get_current_user)) -> dict[str, Any]:
-  notifications = load_notifications_store()
-  bucket = notifications.get(str(current_user["email"])) or []
+  email = str(current_user["email"])
   notification_ids = {notification_id for notification_id in payload.notification_ids if notification_id}
-  for notification in bucket:
-    notif_id = notification.get("notif_id") or notification.get("id")
-    if notif_id in notification_ids or notification.get("id") in notification_ids:
-      notification["read"] = True
-  notifications[str(current_user["email"])] = bucket
-  save_notifications_store(notifications)
-  unread_count = sum(1 for notification in bucket if not notification.get("read"))
-  return {"status": "ok", "unread_count": unread_count}
+  result: dict[str, Any] = {}
+
+  def _mutate(notifications: dict[str, Any]) -> None:
+    bucket = notifications.get(email) or []
+    for notification in bucket:
+      notif_id = notification.get("notif_id") or notification.get("id")
+      if notif_id in notification_ids or notification.get("id") in notification_ids:
+        notification["read"] = True
+    notifications[email] = bucket
+    result["unread_count"] = sum(1 for notification in bucket if not notification.get("read"))
+
+  update_json(NOTIFICATIONS_JSON, {}, _mutate)
+  return {"status": "ok", "unread_count": result["unread_count"]}
 
 
 @app.on_event("startup")
@@ -1491,17 +1541,20 @@ def submit_study(
   ensure_runtime_files()
   append_row(PARTICIPANTS_CSV, participant_row, PARTICIPANT_COLUMNS)
   if response_rows:
-    pd.DataFrame(response_rows, columns=RESPONSES_COLUMNS).to_csv(
-      RESPONSES_CSV, mode="a", index=False, header=False
-    )
+    with _lock_for(RESPONSES_CSV):
+      pd.DataFrame(response_rows, columns=RESPONSES_COLUMNS).to_csv(
+        RESPONSES_CSV, mode="a", index=False, header=False
+      )
 
   # Mark user as completed
-  users = load_user_store()
   email = current_user["email"]
-  if email in users:
-    users[email]["study_completed"] = True
-    users[email]["completed_at"] = payload.submitted_at
-    save_json(USERS_JSON, users)
+
+  def _mark_completed(users: dict[str, Any]) -> None:
+    if email in users:
+      users[email]["study_completed"] = True
+      users[email]["completed_at"] = payload.submitted_at
+
+  update_json(USERS_JSON, {}, _mark_completed)
 
   return {
     "status": "ok",
@@ -1566,14 +1619,18 @@ def get_message_thread(thread_id: str, current_user: dict[str, Any] = Depends(ge
   user_id = str(current_user["user_id"])
   if user_id not in thread_id:
     raise HTTPException(status_code=403, detail="Not allowed")
-  messages = load_messages_store()
-  bucket = messages.get(thread_id) or []
-  for message in bucket:
-    if message.get("from_user_id") != user_id:
-      message["read"] = True
-  messages[thread_id] = bucket
-  save_messages_store(messages)
-  return {"thread_id": thread_id, "messages": bucket}
+  result: dict[str, Any] = {}
+
+  def _mutate(messages: dict[str, Any]) -> None:
+    bucket = messages.get(thread_id) or []
+    for message in bucket:
+      if message.get("from_user_id") != user_id:
+        message["read"] = True
+    messages[thread_id] = bucket
+    result["bucket"] = bucket
+
+  update_json(MESSAGES_JSON, {}, _mutate)
+  return {"thread_id": thread_id, "messages": result["bucket"]}
 
 
 @app.post("/api/messages/{thread_id}")
@@ -1869,14 +1926,16 @@ def admin_export(dataset: str, password: str = Query(...)) -> FileResponse:
 
 @app.post("/api/admin/reset")
 def admin_reset(_: None = Depends(require_admin)) -> dict[str, str]:
-  pd.DataFrame(columns=PARTICIPANT_COLUMNS).to_csv(PARTICIPANTS_CSV, index=False)
-  pd.DataFrame(columns=RESPONSES_COLUMNS).to_csv(RESPONSES_CSV, index=False)
-  pd.DataFrame(columns=DROPOUT_COLUMNS).to_csv(DROPOUTS_CSV, index=False)
-  SHARED_POSTS_JSON.write_text("[]", encoding="utf-8")
-  NOTIFICATIONS_JSON.write_text("{}", encoding="utf-8")
-  MESSAGES_JSON.write_text("{}", encoding="utf-8")
-  USERS_JSON.write_text("{}", encoding="utf-8")
-  session_store.clear()
+  with _lock_for(PARTICIPANTS_CSV):
+    pd.DataFrame(columns=PARTICIPANT_COLUMNS).to_csv(PARTICIPANTS_CSV, index=False)
+  with _lock_for(RESPONSES_CSV):
+    pd.DataFrame(columns=RESPONSES_COLUMNS).to_csv(RESPONSES_CSV, index=False)
+  with _lock_for(DROPOUTS_CSV):
+    pd.DataFrame(columns=DROPOUT_COLUMNS).to_csv(DROPOUTS_CSV, index=False)
+  save_json(SHARED_POSTS_JSON, [])
+  save_json(NOTIFICATIONS_JSON, {})
+  save_json(MESSAGES_JSON, {})
+  save_json(USERS_JSON, {})
   return {"status": "ok"}
 
 
