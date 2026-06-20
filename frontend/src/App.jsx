@@ -1071,6 +1071,7 @@ function StudyFeedPage({ feedImages, responses, onUpdateResponse, onComplete, lo
         <div>
           <p className="srip-eyebrow">Live feed</p>
           <h2 className="mt-2 text-3xl font-semibold tracking-tight text-slate-950">Scroll naturally and judge each post</h2>
+          <p className="mt-2 text-sm text-slate-500">Tell us whether it&apos;s real or AI-modified, and feel free to like and share posts with peers and friends who are also scrolling the feed.</p>
         </div>
         <div className="hidden rounded-full border border-slate-200 bg-white px-4 py-2 text-xs text-slate-500 md:block">Session {sessionReady ? sessionId.slice(0, 8) : "pending"}</div>
       </div>
@@ -1494,6 +1495,14 @@ export default function App() {
   };
 
   const clearAuth = () => {
+    if (sessionId && !studyCompleted && page < 8) {
+      const payload = JSON.stringify({
+        session_id: sessionId,
+        dropped_at_page: page,
+        images_seen: Object.values(responses).filter((response) => response.verdict).length
+      });
+      navigator.sendBeacon("/api/dropout", new Blob([payload], { type: "application/json" }));
+    }
     localStorage.removeItem("srip_token");
     localStorage.removeItem("srip_user");
     setAuthToken("");
