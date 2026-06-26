@@ -8,6 +8,9 @@ const fmtPct    = (v) => v == null ? "—" : Math.round(v * 100) + "%";
 const fmtMs     = (v) => v == null ? "—" : v >= 1000 ? (v / 1000).toFixed(1) + "s" : Math.round(v) + "ms";
 const fmtNum    = (v) => v == null ? "—" : typeof v === "number" ? v.toFixed(2) : String(v);
 const fmtPctBar = (v) => `${Math.round(v * 100)}%`;
+const fmtR      = (v) => v == null ? "—" : (v > 0 ? "+" : "") + v.toFixed(2);
+const fmtP      = (v) => v == null ? "—" : v < 0.001 ? "p < .001" : `p = ${v.toFixed(3)}`;
+const isSig     = (p) => p != null && p < 0.05;
 
 const LABEL_NAMES = ["0% (none)", "0.1%", "0.25%", "0.5%", "1%", "1.5%"];
 const BLUE_SCALE  = ["#94a3b8", "#93c5fd", "#3b82f6", "#1d4ed8", "#1e3a8a", "#172554"];
@@ -46,6 +49,30 @@ const TT = ({ active, payload, label, fmt = (v) => v }) => {
           {p.name}: <strong>{fmt(p.value)}</strong>
         </p>
       ))}
+    </div>
+  );
+};
+const SpotCheckSizeTT = ({ active, payload, label }) => {
+  if (!active || !payload?.length) return null;
+  const row = payload[0]?.payload;
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-lg">
+      <p className="font-semibold text-slate-700">{label}</p>
+      <p style={{ color: "#3b82f6" }}>
+        Detection rate: <strong>{fmtPct(row?.detection_rate)}</strong>
+        {row?.detection_rate_ci && (
+          <span className="text-slate-400"> (95% CI {Math.round(row.detection_rate_ci[0] * 100)}–{Math.round(row.detection_rate_ci[1] * 100)}%)</span>
+        )}
+      </p>
+      {row?.accuracy != null && (
+        <p style={{ color: "#10b981" }}>
+          Accuracy: <strong>{fmtPct(row.accuracy)}</strong>
+          {row?.accuracy_ci && (
+            <span className="text-slate-400"> (95% CI {Math.round(row.accuracy_ci[0] * 100)}–{Math.round(row.accuracy_ci[1] * 100)}%)</span>
+          )}
+        </p>
+      )}
+      <p className="text-xs text-slate-400">n = {row?.n}</p>
     </div>
   );
 };
@@ -344,7 +371,7 @@ function Admin() {
         <Card>
           <SectionTitle
             title="Spot-Check Detection Rate by Label Size"
-            sub='Single post-feed image, "Can you spot a label in this image?" — % who answered Yes, per label-size condition (0% = no label present, so this bucket is the false-positive rate).'
+            sub='Single post-feed image, "Can you spot a label in this image?" — % who answered Yes, per label-size condition (0% = no label present, so this bucket is the false-positive rate). Hover a bar for its 95% confidence interval (Wilson score) — with one observation per participant per bucket, point estimates alone can be misleading at low n.'
           />
           {!(s.spot_check_by_size?.length) ? <NoData /> : (
             <ResponsiveContainer width="100%" height={260}>
@@ -352,7 +379,7 @@ function Admin() {
                 <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
                 <XAxis dataKey="label" tick={{ fontSize: 12 }} />
                 <YAxis domain={[0, 1]} tickFormatter={fmtPctBar} tick={{ fontSize: 12 }} />
-                <Tooltip content={<TT fmt={fmtPct} />} />
+                <Tooltip content={<SpotCheckSizeTT />} />
                 <Bar dataKey="detection_rate" name="% said Yes" radius={[6, 6, 0, 0]}>
                   {s.spot_check_by_size.map((_, i) => <Cell key={i} fill={BLUE_SCALE[i] || "#1e3a8a"} />)}
                 </Bar>
@@ -378,6 +405,144 @@ function Admin() {
                 <Bar dataKey="rt_no_ms" name="Avg RT (said No)" fill="#cbd5e1" radius={[4, 4, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
+          )}
+        </Card>
+
+        <Card>
+          <SectionTitle
+            title="Spot-Check Sensitivity (d') by Label Size"
+            sub="d' isolates genuine detectability from a participant's overall yes-bias by holding the false-alarm rate fixed at the 0% bucket — the same SDT treatment already used for the main AI-detection task, applied here to the spot-check itself. Criterion > 0 = cautious/says-No bias; < 0 = liberal/says-Yes bias."
+          />
+          {!(s.spot_check_dprime_by_size?.length) ? <NoData /> : (
+            <ResponsiveContainer width="100%" height={260}>
+              <BarChart data={s.spot_check_dprime_by_size} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                <XAxis dataKey="label" tick={{ fontSize: 12 }} />
+                <YAxis tick={{ fontSize: 11 }} />
+                <Tooltip content={<TT fmt={fmtNum} />} />
+                <Legend />
+                <Bar dataKey="dprime" name="d' (sensitivity)" fill="#3b82f6" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="criterion" name="Criterion (bias)" fill="#f59e0b" radius={[4, 4, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          )}
+        </Card>
+
+        <Card>
+          <SectionTitle
+            title="Spot-Check Detection Rate by Label Position"
+            sub="Detection rate and accuracy for labeled spot-check images, broken out by which corner the label sits in. Catches reading-order / visual-scanning effects (e.g. top-left noticed more) independent of label size."
+          />
+          {!(s.spot_check_by_position?.length) ? <NoData /> : (
+            <ResponsiveContainer width="100%" height={220}>
+              <BarChart data={s.spot_check_by_position} margin={{ top: 5, right: 10, left: 0, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                <XAxis dataKey="position" tick={{ fontSize: 12 }} />
+                <YAxis domain={[0, 1]} tickFormatter={fmtPctBar} tick={{ fontSize: 12 }} />
+                <Tooltip content={<TT fmt={fmtPct} />} />
+                <Legend />
+                <Bar dataKey="detection_rate" name="Detection rate" fill="#3b82f6" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="accuracy" name="Accuracy" fill="#10b981" radius={[4, 4, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          )}
+        </Card>
+
+        {/* Psychometric detection threshold + significance tests */}
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <StatCard
+            label="50% detection threshold"
+            value={s.spot_check_psychometric?.threshold_50 != null ? `${s.spot_check_psychometric.threshold_50.toFixed(2)}%` : "—"}
+            sub={s.spot_check_psychometric?.threshold_50_ci
+              ? `95% CI ${s.spot_check_psychometric.threshold_50_ci[0].toFixed(2)}–${s.spot_check_psychometric.threshold_50_ci[1].toFixed(2)}%`
+              : "Label size where half of people notice it — needs more data to fit"}
+          />
+          <StatCard
+            label="75% detection threshold"
+            value={s.spot_check_psychometric?.threshold_75 != null ? `${s.spot_check_psychometric.threshold_75.toFixed(2)}%` : "—"}
+            sub={s.spot_check_psychometric?.threshold_75_ci
+              ? `95% CI ${s.spot_check_psychometric.threshold_75_ci[0].toFixed(2)}–${s.spot_check_psychometric.threshold_75_ci[1].toFixed(2)}%`
+              : "Needs more data to fit"}
+          />
+          <StatCard
+            label="Detection ~ size slope"
+            value={fmtNum(s.spot_check_psychometric?.slope)}
+            sub={s.spot_check_psychometric ? `Logistic fit, ${fmtP(s.spot_check_psychometric.slope_p_value)}` : "Needs more data to fit"}
+            color={isSig(s.spot_check_psychometric?.slope_p_value) ? "text-emerald-600" : "text-slate-900"}
+          />
+          <StatCard
+            label="Size affects Yes/No?"
+            value={s.spot_check_chi_square ? `χ² = ${s.spot_check_chi_square.statistic}` : "—"}
+            sub={s.spot_check_chi_square ? `df=${s.spot_check_chi_square.dof}, ${fmtP(s.spot_check_chi_square.p_value)}, n=${s.spot_check_chi_square.n}` : "No data yet"}
+            color={isSig(s.spot_check_chi_square?.p_value) ? "text-emerald-600" : "text-slate-900"}
+          />
+        </div>
+
+        <Card>
+          <SectionTitle
+            title="Spot-Check Detection vs. Main-Feed Accuracy"
+            sub="Does noticing the spot-check label predict doing better at the actual real-vs-AI judgment? Compares average main-feed accuracy for participants who did vs. didn't correctly answer the spot check, plus the point-biserial correlation between the two."
+          />
+          {!s.spot_check_vs_feed_accuracy ? <NoData /> : (
+            <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
+              <div>
+                <p className="text-xs font-bold uppercase tracking-widest text-slate-400">Detected the label</p>
+                <p className="mt-1 text-xl font-bold text-emerald-600">{fmtPct(s.spot_check_vs_feed_accuracy.mean_accuracy_when_detected)}</p>
+                <p className="text-xs text-slate-400">avg feed accuracy, n={s.spot_check_vs_feed_accuracy.n_detected}</p>
+              </div>
+              <div>
+                <p className="text-xs font-bold uppercase tracking-widest text-slate-400">Missed the label</p>
+                <p className="mt-1 text-xl font-bold text-red-500">{fmtPct(s.spot_check_vs_feed_accuracy.mean_accuracy_when_missed)}</p>
+                <p className="text-xs text-slate-400">avg feed accuracy, n={s.spot_check_vs_feed_accuracy.n_missed}</p>
+              </div>
+              <div>
+                <p className="text-xs font-bold uppercase tracking-widest text-slate-400">Correlation</p>
+                <p className={`mt-1 text-xl font-bold ${isSig(s.spot_check_vs_feed_accuracy.correlation?.p_value) ? "text-emerald-600" : "text-slate-900"}`}>
+                  {fmtR(s.spot_check_vs_feed_accuracy.correlation?.r)}
+                </p>
+                <p className="text-xs text-slate-400">
+                  {s.spot_check_vs_feed_accuracy.correlation ? fmtP(s.spot_check_vs_feed_accuracy.correlation.p_value) : "—"}, n={s.spot_check_vs_feed_accuracy.correlation?.n ?? "—"}
+                </p>
+              </div>
+            </div>
+          )}
+        </Card>
+
+        <Card>
+          <SectionTitle
+            title="Demographic Correlations"
+            sub="Pearson correlation (Likert scales treated as interval — the standard approximation for scales this short) between age / self-reported AI-tool usage frequency / AI-detection confidence, and both overall feed accuracy and spot-check detection success."
+          />
+          {!s.demographic_correlations ? <NoData /> : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-slate-200 text-left text-xs font-bold uppercase tracking-widest text-slate-400">
+                    <th className="py-2 pr-2">Pair</th>
+                    <th className="py-2 pr-2">r</th>
+                    <th className="py-2 pr-2">p-value</th>
+                    <th className="py-2">n</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {[
+                    ["Age vs. feed accuracy", s.demographic_correlations.age_vs_accuracy],
+                    ["AI-usage frequency vs. feed accuracy", s.demographic_correlations.ai_frequency_vs_accuracy],
+                    ["AI-detection confidence vs. feed accuracy", s.demographic_correlations.ai_confidence_vs_accuracy],
+                    ["Age vs. spot-check detection", s.demographic_correlations.age_vs_spot_check_detection],
+                    ["AI-usage frequency vs. spot-check detection", s.demographic_correlations.ai_frequency_vs_spot_check_detection],
+                    ["AI-detection confidence vs. spot-check detection", s.demographic_correlations.ai_confidence_vs_spot_check_detection],
+                  ].map(([name, corr]) => (
+                    <tr key={name} className="border-b border-slate-100">
+                      <td className="py-2 pr-2 text-slate-700">{name}</td>
+                      <td className={`py-2 pr-2 font-semibold ${isSig(corr?.p_value) ? "text-emerald-600" : "text-slate-900"}`}>{fmtR(corr?.r)}</td>
+                      <td className="py-2 pr-2 text-slate-500">{corr ? fmtP(corr.p_value) : "—"}</td>
+                      <td className="py-2 text-slate-500">{corr?.n ?? "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           )}
         </Card>
 

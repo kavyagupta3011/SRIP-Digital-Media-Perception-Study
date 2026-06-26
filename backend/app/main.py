@@ -85,6 +85,226 @@ def compute_dprime(hit_rate: float | None, fa_rate: float | None) -> tuple[float
   zf = _z(fa_rate)
   return round(zh - zf, 4), round(-0.5 * (zh + zf), 4)
 
+
+# -- Publication-grade stats helpers (hand-rolled, no scipy/numpy dependency) -
+def wilson_ci(successes: float, n: int, z: float = 1.96) -> tuple[float, float] | tuple[None, None]:
+  """
+  Wilson score interval for a binomial proportion. More accurate than the
+  naive normal approximation at the small-n / extreme-proportion samples
+  individual spot-check buckets tend to have (each participant contributes
+  at most one observation per label-size bucket).
+  """
+  import math
+  if not n:
+    return None, None
+  phat = successes / n
+  denom = 1.0 + (z * z) / n
+  center = (phat + (z * z) / (2 * n)) / denom
+  half = (z / denom) * math.sqrt((phat * (1.0 - phat) / n) + (z * z) / (4.0 * n * n))
+  return round(max(0.0, center - half), 4), round(min(1.0, center + half), 4)
+
+
+def _norm_cdf(x: float) -> float:
+  """Standard normal CDF via the exact error function (math.erf is in stdlib)."""
+  import math
+  return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
+
+
+def _gammp_series(a: float, x: float) -> float:
+  """Regularized lower incomplete gamma P(a,x), series form (valid x < a+1)."""
+  import math
+  if x <= 0:
+    return 0.0
+  ap = a
+  total = 1.0 / a
+  delta = total
+  for _ in range(300):
+    ap += 1.0
+    delta *= x / ap
+    total += delta
+    if abs(delta) < abs(total) * 1e-12:
+      break
+  return total * math.exp(-x + a * math.log(x) - math.lgamma(a))
+
+
+def _gammq_cf(a: float, x: float) -> float:
+  """Regularized upper incomplete gamma Q(a,x), continued-fraction form (valid x >= a+1)."""
+  import math
+  tiny = 1e-300
+  b = x + 1.0 - a
+  c = 1.0 / tiny
+  d = 1.0 / b
+  h = d
+  for i in range(1, 300):
+    an = -i * (i - a)
+    b += 2.0
+    d = an * d + b
+    if abs(d) < tiny:
+      d = tiny
+    c = b + an / c
+    if abs(c) < tiny:
+      c = tiny
+    d = 1.0 / d
+    delta = d * c
+    h *= delta
+    if abs(delta - 1.0) < 1e-12:
+      break
+  return math.exp(-x + a * math.log(x) - math.lgamma(a)) * h
+
+
+def chi2_sf(stat: float, dof: int) -> float | None:
+  """
+  Upper-tail p-value for a chi-square statistic. Implemented by hand
+  (Numerical-Recipes-style regularized incomplete gamma) so the project
+  doesn't need a scipy dependency just for one significance test.
+  """
+  if stat is None or dof is None or dof <= 0:
+    return None
+  if stat <= 0:
+    return 1.0
+  a = dof / 2.0
+  x = stat / 2.0
+  try:
+    if x < a + 1.0:
+      return round(max(0.0, min(1.0, 1.0 - _gammp_series(a, x))), 6)
+    return round(max(0.0, min(1.0, _gammq_cf(a, x))), 6)
+  except (ValueError, OverflowError):
+    return None
+
+
+def fit_logistic_1d(xs: list[float], ys: list[bool | float]) -> dict[str, Any] | None:
+  """
+  Fits P(y=1) = logistic(b0 + b1*x) by hand via Newton-Raphson / IRLS (no
+  scipy/numpy). Used to estimate the spot-check "detection threshold"
+  psychometric curve -- hit rate as a function of label_size_pct. Returns
+  None if there's not enough data or variation to fit a stable curve.
+  """
+  import math
+  n = len(xs)
+  if n < 8:
+    return None
+  y = [1.0 if v else 0.0 for v in ys]
+  if len(set(xs)) < 2 or len(set(y)) < 2:
+    return None
+
+  b0, b1 = 0.0, 0.0
+  for _ in range(50):
+    s00 = s01 = s11 = g0 = g1 = 0.0
+    for xi, yi in zip(xs, y):
+      eta = max(-30.0, min(30.0, b0 + b1 * xi))
+      p = 1.0 / (1.0 + math.exp(-eta))
+      w = p * (1.0 - p)
+      s00 += w
+      s01 += w * xi
+      s11 += w * xi * xi
+      g0 += (yi - p)
+      g1 += (yi - p) * xi
+    det = s00 * s11 - s01 * s01
+    if abs(det) < 1e-12:
+      return None
+    db0 = (s11 * g0 - s01 * g1) / det
+    db1 = (s00 * g1 - s01 * g0) / det
+    b0 += db0
+    b1 += db1
+    if abs(db0) < 1e-8 and abs(db1) < 1e-8:
+      break
+
+  # Recompute the information matrix at convergence for standard errors.
+  s00 = s01 = s11 = 0.0
+  for xi in xs:
+    eta = max(-30.0, min(30.0, b0 + b1 * xi))
+    p = 1.0 / (1.0 + math.exp(-eta))
+    w = p * (1.0 - p)
+    s00 += w
+    s01 += w * xi
+    s11 += w * xi * xi
+  det = s00 * s11 - s01 * s01
+  if abs(det) < 1e-12:
+    return None
+  var_b1 = s00 / det
+  var_b0 = s11 / det
+  se_b1 = math.sqrt(var_b1) if var_b1 > 0 else None
+  se_b0 = math.sqrt(var_b0) if var_b0 > 0 else None
+
+  z_b1 = (b1 / se_b1) if se_b1 else None
+  p_b1 = round(2.0 * (1.0 - _norm_cdf(abs(z_b1))), 6) if z_b1 is not None else None
+
+  def threshold_for(q: float) -> float | None:
+    if b1 == 0:
+      return None
+    logit_q = math.log(q / (1.0 - q))
+    return (logit_q - b0) / b1
+
+  return {
+    "intercept": round(b0, 6),
+    "slope": round(b1, 6),
+    "slope_se": round(se_b1, 6) if se_b1 else None,
+    "slope_p_value": p_b1,
+    "threshold_50": threshold_for(0.5),
+    "threshold_75": threshold_for(0.75),
+    "n": n,
+  }
+
+
+def bootstrap_threshold_ci(xs: list[float], ys: list[bool | float], n_boot: int = 300, level: str = "threshold_50",
+                            seed: str = "psychometric_bootstrap") -> tuple[float, float] | tuple[None, None]:
+  """Percentile bootstrap (resampling rows with replacement) for a 95% CI on
+  the fitted detection threshold. Cheap because each refit is a ~50-iteration
+  2-parameter Newton solve over at most a few hundred rows."""
+  n = len(xs)
+  if n < 15:
+    return None, None
+  rng = random.Random(seed)
+  estimates: list[float] = []
+  for _ in range(n_boot):
+    idx = [rng.randrange(n) for _ in range(n)]
+    fit = fit_logistic_1d([xs[i] for i in idx], [ys[i] for i in idx])
+    if fit is None:
+      continue
+    thr = fit.get(level)
+    if thr is not None and -5.0 <= thr <= 5.0:  # guard against wild extrapolation
+      estimates.append(thr)
+  if len(estimates) < 30:
+    return None, None
+  estimates.sort()
+  lo_idx = int(0.025 * len(estimates))
+  hi_idx = min(len(estimates) - 1, int(0.975 * len(estimates)))
+  return round(estimates[lo_idx], 4), round(estimates[hi_idx], 4)
+
+
+def pearson_with_p(xs: list[float], ys: list[float]) -> dict[str, Any] | None:
+  """
+  Pearson correlation with a significance test via the Fisher z-transform
+  (normal approximation -- standard practice for correlation significance
+  and avoids needing scipy's incomplete-beta t-distribution CDF). Used for
+  demographic-vs-accuracy and cross-task correlations.
+  """
+  import math
+  pairs = [
+    (x, y) for x, y in zip(xs, ys)
+    if x is not None and y is not None
+    and not (isinstance(x, float) and math.isnan(x))
+    and not (isinstance(y, float) and math.isnan(y))
+  ]
+  n = len(pairs)
+  if n < 4:
+    return None
+  mx = sum(p[0] for p in pairs) / n
+  my = sum(p[1] for p in pairs) / n
+  sxy = sum((p[0] - mx) * (p[1] - my) for p in pairs)
+  sxx = sum((p[0] - mx) ** 2 for p in pairs)
+  syy = sum((p[1] - my) ** 2 for p in pairs)
+  if sxx <= 0 or syy <= 0:
+    return {"r": None, "n": n, "p_value": None}
+  r = sxy / math.sqrt(sxx * syy)
+  r_clamped = max(-0.999999, min(0.999999, r))
+  p_value = None
+  if n > 3:
+    fz = math.atanh(r_clamped) * math.sqrt(n - 3)
+    p_value = round(2.0 * (1.0 - _norm_cdf(abs(fz))), 6)
+  return {"r": round(r, 4), "n": n, "p_value": p_value}
+
+
 CATEGORIES = [f"cat{index:02d}" for index in range(1, 11)]
 LABEL_SIZES = [0.0, 0.1, 0.25, 0.5, 1.0, 1.5]
 
@@ -1875,6 +2095,12 @@ def admin_stats(_: None = Depends(require_admin)) -> dict[str, Any]:
   spot_check_response_time_by_size: list[dict] = []
   spot_check_false_positive_rate: float | None = None
   spot_check_fast_guess_rate: float | None = None
+  spot_check_dprime_by_size: list[dict] = []
+  spot_check_by_position: list[dict] = []
+  spot_check_psychometric: dict[str, Any] | None = None
+  spot_check_chi_square: dict[str, Any] | None = None
+  spot_check_vs_feed_accuracy: dict[str, Any] | None = None
+  demographic_correlations: dict[str, Any] | None = None
   mean_dprime: float | None = None
   mean_response_bias: float | None = None
   attention_pass_rate: float | None = None
@@ -1999,16 +2225,28 @@ def admin_stats(_: None = Depends(require_admin)) -> dict[str, Any]:
         for size, grp in sf.groupby("label_size_pct"):
           answered = grp["participant_answer"].dropna()
           label = LABEL_NAMES_MAP.get(float(size), f"{size}%")
-          detection_rate = round(float(answered.mean()), 4) if len(answered) > 0 else None
+          n_answered = len(answered)
+          successes = int(answered.sum()) if n_answered > 0 else 0
+          detection_rate = round(float(answered.mean()), 4) if n_answered > 0 else None
+          det_lo, det_hi = wilson_ci(successes, n_answered) if n_answered > 0 else (None, None)
+
           accuracy_rate = None
+          acc_lo, acc_hi = None, None
           if "is_correct" in grp.columns:
-            correct = grp["is_correct"].dropna()
-            accuracy_rate = round(float(correct.astype("boolean").astype(float).mean()), 4) if len(correct) > 0 else None
+            correct = grp["is_correct"].dropna().astype("boolean")
+            n_correct_total = len(correct)
+            if n_correct_total > 0:
+              n_correct = int(correct.astype(float).sum())
+              accuracy_rate = round(n_correct / n_correct_total, 4)
+              acc_lo, acc_hi = wilson_ci(n_correct, n_correct_total)
+
           spot_check_by_size.append({
             "label": label,
             "label_size_pct": float(size),
             "detection_rate": detection_rate,
+            "detection_rate_ci": [det_lo, det_hi] if det_lo is not None else None,
             "accuracy": accuracy_rate,
+            "accuracy_ci": [acc_lo, acc_hi] if acc_lo is not None else None,
             "n": len(grp),
           })
 
@@ -2033,6 +2271,138 @@ def admin_stats(_: None = Depends(require_admin)) -> dict[str, Any]:
         if "fast_guess_flag" in sf.columns:
           flags = sf["fast_guess_flag"].dropna().astype("boolean")
           spot_check_fast_guess_rate = round(float(flags.astype(float).mean()), 4) if len(flags) > 0 else None
+
+        # -- Sensitivity (d') per label size, holding the false-alarm rate ---
+        # fixed at the 0% bucket's detection rate. This separates genuine
+        # detectability from a participant's overall yes-bias, the same way
+        # the main feed's d'/criterion already does for AI-detection -- it
+        # was previously only computed for the feed task, not this one.
+        for row in spot_check_by_size:
+          if row["label_size_pct"] == 0.0:
+            continue
+          dprime, criterion = compute_dprime(row["detection_rate"], spot_check_false_positive_rate)
+          spot_check_dprime_by_size.append({
+            "label": row["label"],
+            "label_size_pct": row["label_size_pct"],
+            "dprime": dprime,
+            "criterion": criterion,
+            "n": row["n"],
+          })
+
+        # -- Detection rate by label position (labeled images only) ---------
+        if "label_position" in sf.columns:
+          labeled_for_pos = sf[sf["label_size_pct"] > 0]
+          for pos, pgrp in labeled_for_pos.groupby("label_position"):
+            if not pos or str(pos).strip() == "" or str(pos).lower() == "nan":
+              continue
+            answered = pgrp["participant_answer"].dropna()
+            n_answered = len(answered)
+            successes = int(answered.sum()) if n_answered > 0 else 0
+            det_rate = round(float(answered.mean()), 4) if n_answered > 0 else None
+            det_lo, det_hi = wilson_ci(successes, n_answered) if n_answered > 0 else (None, None)
+            acc_rate = None
+            if "is_correct" in pgrp.columns:
+              correct = pgrp["is_correct"].dropna().astype("boolean")
+              acc_rate = round(float(correct.astype(float).mean()), 4) if len(correct) > 0 else None
+            spot_check_by_position.append({
+              "position": str(pos),
+              "detection_rate": det_rate,
+              "detection_rate_ci": [det_lo, det_hi] if det_lo is not None else None,
+              "accuracy": acc_rate,
+              "n": len(pgrp),
+            })
+          spot_check_by_position.sort(key=lambda x: x["position"])
+
+        # -- Psychometric detection-threshold curve --------------------------
+        # Row-level fit (not the binned means) over all labeled spot-check
+        # images: P(detect) = logistic(b0 + b1 * label_size_pct). Ground
+        # truth is always "has label" for these rows, so detecting ==
+        # hitting == participant_answer being True -- this is exactly the
+        # hit-rate-vs-size curve standard in visibility/psychophysics work,
+        # and the headline number ("label X% is the point where half of
+        # people notice it") that a publication wants.
+        labeled_rows = sf[(sf["label_size_pct"] > 0) & sf["participant_answer"].notna()]
+        if len(labeled_rows) >= 8:
+          fit_xs = [float(v) for v in labeled_rows["label_size_pct"].tolist()]
+          fit_ys = [bool(v) for v in labeled_rows["participant_answer"].tolist()]
+          fit = fit_logistic_1d(fit_xs, fit_ys)
+          if fit is not None:
+            thr50_lo, thr50_hi = bootstrap_threshold_ci(fit_xs, fit_ys, level="threshold_50")
+            thr75_lo, thr75_hi = bootstrap_threshold_ci(fit_xs, fit_ys, level="threshold_75")
+            spot_check_psychometric = {
+              **fit,
+              "threshold_50_ci": [thr50_lo, thr50_hi] if thr50_lo is not None else None,
+              "threshold_75_ci": [thr75_lo, thr75_hi] if thr75_lo is not None else None,
+            }
+
+        # -- Chi-square test of independence: does Yes/No depend on the ------
+        # label-size bucket? (i.e. is detection rate actually varying with
+        # size, or could the differences across buckets be noise?)
+        buckets_for_test = [row for row in spot_check_by_size if row["n"] > 0]
+        if len(buckets_for_test) >= 2:
+          observed = []
+          for row in buckets_for_test:
+            ans = sf.loc[sf["label_size_pct"] == row["label_size_pct"], "participant_answer"].dropna()
+            yes_n = int(ans.sum())
+            observed.append((yes_n, int(len(ans) - yes_n)))
+          total_yes = sum(o[0] for o in observed)
+          total_no = sum(o[1] for o in observed)
+          grand_total = total_yes + total_no
+          if grand_total > 0 and total_yes > 0 and total_no > 0:
+            stat = 0.0
+            for yes_n, no_n in observed:
+              row_total = yes_n + no_n
+              exp_yes = row_total * total_yes / grand_total
+              exp_no = row_total * total_no / grand_total
+              if exp_yes > 0:
+                stat += (yes_n - exp_yes) ** 2 / exp_yes
+              if exp_no > 0:
+                stat += (no_n - exp_no) ** 2 / exp_no
+            dof = len(observed) - 1
+            spot_check_chi_square = {
+              "statistic": round(stat, 4),
+              "dof": dof,
+              "p_value": chi2_sf(stat, dof),
+              "n": grand_total,
+            }
+
+        # -- Cross-task correlation: spot-check detection vs main-feed -------
+        # accuracy, plus demographic correlations. Tests whether the people
+        # who are better at literally spotting a label also do better at
+        # the real-vs-AI judgment itself, and whether age/AI-familiarity
+        # predict either outcome.
+        if "is_correct" in sf.columns and PARTICIPANTS_CSV.exists():
+          try:
+            pf_join = pd.read_csv(PARTICIPANTS_CSV)
+            needed_cols = {"session_id", "overall_accuracy", "age", "ai_frequency", "ai_confidence"}
+            if not pf_join.empty and needed_cols.issubset(pf_join.columns) and "session_id" in sf.columns:
+              merged = sf[["session_id", "is_correct"]].dropna(subset=["is_correct"]).merge(
+                pf_join[list(needed_cols)], on="session_id", how="inner",
+              )
+              merged["is_correct"] = merged["is_correct"].astype("boolean").astype(float)
+              if not merged.empty:
+                detected = merged.loc[merged["is_correct"] == 1.0, "overall_accuracy"].dropna()
+                missed = merged.loc[merged["is_correct"] == 0.0, "overall_accuracy"].dropna()
+                spot_check_vs_feed_accuracy = {
+                  "mean_accuracy_when_detected": round(float(detected.mean()), 4) if len(detected) > 0 else None,
+                  "mean_accuracy_when_missed": round(float(missed.mean()), 4) if len(missed) > 0 else None,
+                  "n_detected": int(len(detected)),
+                  "n_missed": int(len(missed)),
+                  "correlation": pearson_with_p(merged["is_correct"].tolist(), merged["overall_accuracy"].tolist()),
+                }
+
+                # Likert-as-interval Pearson correlation -- the standard, if
+                # imperfect, approximation used for short ordinal scales.
+                demographic_correlations = {
+                  "age_vs_accuracy": pearson_with_p(merged["age"].tolist(), merged["overall_accuracy"].tolist()),
+                  "ai_frequency_vs_accuracy": pearson_with_p(merged["ai_frequency"].tolist(), merged["overall_accuracy"].tolist()),
+                  "ai_confidence_vs_accuracy": pearson_with_p(merged["ai_confidence"].tolist(), merged["overall_accuracy"].tolist()),
+                  "age_vs_spot_check_detection": pearson_with_p(merged["age"].tolist(), merged["is_correct"].tolist()),
+                  "ai_frequency_vs_spot_check_detection": pearson_with_p(merged["ai_frequency"].tolist(), merged["is_correct"].tolist()),
+                  "ai_confidence_vs_spot_check_detection": pearson_with_p(merged["ai_confidence"].tolist(), merged["is_correct"].tolist()),
+                }
+          except Exception:
+            pass
     except Exception:
       pass
 
@@ -2065,6 +2435,12 @@ def admin_stats(_: None = Depends(require_admin)) -> dict[str, Any]:
     "spot_check_response_time_by_size": spot_check_response_time_by_size,
     "spot_check_false_positive_rate": spot_check_false_positive_rate,
     "spot_check_fast_guess_rate": spot_check_fast_guess_rate,
+    "spot_check_dprime_by_size": spot_check_dprime_by_size,
+    "spot_check_by_position": spot_check_by_position,
+    "spot_check_psychometric": spot_check_psychometric,
+    "spot_check_chi_square": spot_check_chi_square,
+    "spot_check_vs_feed_accuracy": spot_check_vs_feed_accuracy,
+    "demographic_correlations": demographic_correlations,
     "like_rate_by_type": like_rate_by_type,
     "mean_ies": mean_ies,
     "mean_learning_effect": mean_learning_effect,
