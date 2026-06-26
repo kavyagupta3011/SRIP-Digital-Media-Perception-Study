@@ -42,6 +42,7 @@ RESPONSES_CSV = STORE_DIR / "responses.csv"
 USERS_JSON = STORE_DIR / "users.json"
 NOTIFICATIONS_JSON = STORE_DIR / "notifications.json"
 SHARED_POSTS_JSON = STORE_DIR / "shared_posts.json"
+PENDING_SHARE_EMAILS_JSON = STORE_DIR / "pending_share_emails.json"
 MESSAGES_JSON = STORE_DIR / "messages.json"
 DROPOUTS_CSV = STORE_DIR / "dropouts.csv"
 SPOT_CHECKS_CSV = STORE_DIR / "spot_checks.csv"
@@ -847,6 +848,8 @@ def ensure_runtime_files() -> None:
     save_json(SHARED_POSTS_JSON, [])
   if not MESSAGES_JSON.exists():
     save_json(MESSAGES_JSON, {})
+  if not PENDING_SHARE_EMAILS_JSON.exists():
+    save_json(PENDING_SHARE_EMAILS_JSON, {})
 
 
 def load_manifest() -> pd.DataFrame:
@@ -1444,28 +1447,53 @@ def queue_notification(recipient_email: str, notification: dict[str, Any]) -> No
 # for SHARE_EMAIL_BATCH_SECONDS), we send exactly one email summarizing how
 # many posts were shared since the last email. A different sharer to the
 # same recipient gets their own independent timer/email.
+#
+# We run 4 uvicorn workers (separate processes, see Procfile), so an
+# in-memory dict + threading.Timer is NOT enough on its own: if 3 shares to
+# the same recipient land on 2 different worker processes, each process
+# starts its own "private" timer with no idea the other exists, and both
+# eventually fire -> 2 emails instead of 1. We fix this the same way
+# email_service.py fixes cross-worker rate limiting: the batch's count and
+# a per-update "token" live in a shared JSON file (via update_json's
+# FileLock-protected read-modify-write). Every queued share writes a fresh
+# token; a timer only sends if, when it fires, the file's token still
+# matches the one it was scheduled with -- i.e. no later share (handled by
+# this or any other worker) has come in since. Only the timer tied to the
+# truly-last share in the batch will ever see a match, so exactly one email
+# goes out, no matter which worker(s) handled the individual /api/social/
+# share requests.
 SHARE_EMAIL_BATCH_SECONDS = float(os.getenv("SHARE_EMAIL_BATCH_SECONDS", "120"))
-_pending_share_emails: dict[tuple[str, str], dict[str, Any]] = {}
-_share_email_timers: dict[tuple[str, str], threading.Timer] = {}
-_share_email_lock = threading.Lock()
+_share_email_timers: dict[str, threading.Timer] = {}
+_share_email_timers_lock = threading.Lock()
 
 
-def _flush_share_email(key: tuple[str, str]) -> None:
-  with _share_email_lock:
-    pending = _pending_share_emails.pop(key, None)
+def _flush_share_email(key: str, token: str) -> None:
+  with _share_email_timers_lock:
     _share_email_timers.pop(key, None)
-  if not pending:
+
+  def _claim(pending: dict[str, Any]) -> dict[str, Any] | None:
+    entry = pending.get(key)
+    if not entry or entry.get("token") != token:
+      # A later share (this worker or another) reset the batch after this
+      # timer was scheduled -- that share's own timer owns sending it.
+      return None
+    pending.pop(key, None)
+    return entry
+
+  entry = update_json(PENDING_SHARE_EMAILS_JSON, {}, _claim)
+  if not entry:
     return
-  recipient = get_user_by_id(pending["recipient_id"])
-  study_completed = bool(recipient.get("study_completed")) if recipient else pending["recipient_study_completed"]
+
+  recipient = get_user_by_id(entry["recipient_id"])
+  study_completed = bool(recipient.get("study_completed")) if recipient else entry["recipient_study_completed"]
   try:
     send_share_email(
-      to_email=pending["recipient_email"],
-      recipient_name=pending["recipient_name"],
-      sharer_name=pending["sharer_name"],
+      to_email=entry["recipient_email"],
+      recipient_name=entry["recipient_name"],
+      sharer_name=entry["sharer_name"],
       study_completed=study_completed,
-      feed_caption=pending["latest_caption"],
-      share_count=pending["count"],
+      feed_caption=entry["latest_caption"],
+      share_count=entry["count"],
       study_link=STUDY_LINK,
     )
   except Exception as exc:
@@ -1481,29 +1509,33 @@ def queue_share_email(
   recipient_study_completed: bool,
   feed_caption: str,
 ) -> None:
-  key = (str(sharer_id), str(recipient_id))
-  with _share_email_lock:
-    entry = _pending_share_emails.get(key)
-    if entry is None:
-      entry = {
-        "sharer_name": sharer_name,
-        "recipient_id": recipient_id,
-        "recipient_email": recipient_email,
-        "recipient_name": recipient_name,
-        "recipient_study_completed": recipient_study_completed,
-        "count": 0,
-        "latest_caption": "",
-      }
-      _pending_share_emails[key] = entry
+  key = f"{sharer_id}:{recipient_id}"
+  token = str(uuid.uuid4())
+
+  def _mutate(pending: dict[str, Any]) -> None:
+    entry = pending.get(key) or {
+      "sharer_name": sharer_name,
+      "recipient_id": recipient_id,
+      "recipient_email": recipient_email,
+      "recipient_name": recipient_name,
+      "recipient_study_completed": recipient_study_completed,
+      "count": 0,
+      "latest_caption": "",
+    }
     entry["count"] += 1
     entry["recipient_study_completed"] = recipient_study_completed
     if feed_caption:
       entry["latest_caption"] = feed_caption
+    entry["token"] = token
+    pending[key] = entry
 
+  update_json(PENDING_SHARE_EMAILS_JSON, {}, _mutate)
+
+  with _share_email_timers_lock:
     existing_timer = _share_email_timers.get(key)
     if existing_timer is not None:
       existing_timer.cancel()
-    timer = threading.Timer(SHARE_EMAIL_BATCH_SECONDS, _flush_share_email, args=(key,))
+    timer = threading.Timer(SHARE_EMAIL_BATCH_SECONDS, _flush_share_email, args=(key, token))
     timer.daemon = True
     _share_email_timers[key] = timer
     timer.start()
@@ -2482,6 +2514,7 @@ def admin_reset(_: None = Depends(require_admin)) -> dict[str, str]:
   save_json(NOTIFICATIONS_JSON, {})
   save_json(MESSAGES_JSON, {})
   save_json(USERS_JSON, {})
+  save_json(PENDING_SHARE_EMAILS_JSON, {})
   return {"status": "ok"}
 
 

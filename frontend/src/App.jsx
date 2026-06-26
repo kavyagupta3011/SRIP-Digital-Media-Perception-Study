@@ -1504,7 +1504,7 @@ export default function App() {
   }, [page, responses, sessionId, studyCompleted]);
 
   useEffect(() => {
-    if (!authToken || page !== 8 || !studyCompleted) return undefined;
+    if (!authToken || page !== 9 || !studyCompleted) return undefined;
     let cancelled = false;
     (async () => {
       setWallLoading(true);
