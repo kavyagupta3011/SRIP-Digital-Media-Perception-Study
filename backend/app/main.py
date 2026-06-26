@@ -1132,16 +1132,17 @@ def build_spot_check_image(session_id: str) -> dict[str, Any]:
   Picks the single post-feed "can you spot a label" test image for a session.
 
   Stratified by label size: shuffle the 6 size buckets (0%, 0.1%, 0.25%,
-  0.5%, 1%, 1.5%) with a session-seeded RNG, then take the first bucket that still
-  has an eligible image once this participant's own 10 feed images are
-  excluded. This keeps per-bucket sample sizes roughly even across the whole
-  participant pool (needed for a clean detection-rate-vs-size curve) while
-  staying deterministic per session, so reloading the page can't reroll a
-  different image.
+  0.5%, 1%, 1.5%) with a session-seeded RNG, then take the first bucket that
+  has any eligible image in the manifest. This keeps per-bucket sample sizes
+  roughly even across the whole participant pool (needed for a clean
+  detection-rate-vs-size curve) while staying deterministic per session, so
+  reloading the page can't reroll a different image.
+
+  This is drawn independently of the participant's own 10-image feed -- it
+  is fine (and expected) for the spot-check image to repeat one they already
+  saw in their feed; nothing is excluded here.
   """
   manifest = load_manifest()
-  feed_images = build_session_images(session_id)
-  excluded_ids = {img["image_id"] for img in feed_images}
   rng = random.Random(f"{session_id}:spot_check")
 
   buckets = list(LABEL_SIZES)
@@ -1152,17 +1153,15 @@ def build_spot_check_image(session_id: str) -> dict[str, Any]:
       eligible = manifest[manifest["image_type"].isin(["real", "ai_nolabel"])]
     else:
       eligible = manifest[(manifest["image_type"] == "ai_labeled") & (manifest["label_size_pct"] == size)]
-    eligible = eligible[~eligible["image_id"].isin(excluded_ids)]
     if not eligible.empty:
       chosen = eligible.iloc[rng.randrange(len(eligible))]
       return as_image_object(chosen)
 
-  # Fallback (only if every bucket was exhausted by the exclusion, e.g. a
-  # very small dataset): allow a repeat of a feed image rather than 500-ing.
-  eligible_any = manifest[~manifest["image_id"].isin(excluded_ids)]
-  if eligible_any.empty:
-    eligible_any = manifest
-  chosen = eligible_any.iloc[rng.randrange(len(eligible_any))]
+  # Fallback (should never trigger with a non-empty manifest, kept as a
+  # guard against a misconfigured/empty dataset).
+  if manifest.empty:
+    raise HTTPException(status_code=500, detail="No images available for spot check")
+  chosen = manifest.iloc[rng.randrange(len(manifest))]
   return as_image_object(chosen)
 
 

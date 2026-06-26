@@ -503,7 +503,7 @@ function Admin() {
                 <BarChart data={s.dropout_by_page.map((d) => ({ name: d.label, count: d.count }))}
                   layout="vertical" margin={{ top: 0, right: 10, left: 10, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" horizontal={false} />
-                  <XAxis type="number" tick={{ fontSize: 11 }} />
+                  <XAxis type="number" allowDecimals={false} tick={{ fontSize: 11 }} />
                   <YAxis dataKey="name" type="category" tick={{ fontSize: 11 }} width={90} />
                   <Tooltip />
                   <Bar dataKey="count" fill="#f87171" name="Dropouts" radius={[0, 4, 4, 0]} />
