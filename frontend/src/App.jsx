@@ -21,11 +21,6 @@ const RESPONSIBILITY_OPTIONS = [
   "The social media platform",
   "Government/Regulatory bodies"
 ];
-const DIFFICULT_WORDS = [
-  { scrambled: "ATAD", answer: "data" },
-  { scrambled: "TNERINET", answer: "internet" },
-  { scrambled: "EWRFOAST", answer: "software" }
-];
 const LABEL_LOOKUP = { 0: "none", 0.5: "0.5%", 1: "1.0%", 1.5: "1.5%", 2: "2.0%" };
 
 function clamp(value, min, max) {
@@ -487,37 +482,131 @@ function ShareModal({ image, results, selectedIds, searchQuery, onSearchQueryCha
   );
 }
 
-function DistractorPage({ answers, setAnswers, onContinue }) {
-  const allFilled = useMemo(() => DIFFICULT_WORDS.every((word) => (answers[word.scrambled] || "").trim()), [answers]);
+function SpotCheckPage({ spotCheckImage, loading, error, onRetry, onComplete }) {
+  const [imageFailed, setImageFailed] = useState(false);
+  const [answer, setAnswer] = useState(null);
+  const [pendingTiming, setPendingTiming] = useState(null);
+  const mountedAtRef = useRef(Date.now());
+  const imageLoadedAtRef = useRef(null);
+
+  // Same back-block pattern as the feed: once you've answered the spot
+  // check, you cannot navigate back into the 10-image feed.
+  useEffect(() => {
+    const blockBack = () => window.history.pushState(null, "", window.location.href);
+    window.history.pushState(null, "", window.location.href);
+    window.addEventListener("popstate", blockBack);
+    return () => window.removeEventListener("popstate", blockBack);
+  }, []);
+
+  useEffect(() => {
+    mountedAtRef.current = Date.now();
+    imageLoadedAtRef.current = null;
+    setAnswer(null);
+    setPendingTiming(null);
+    setImageFailed(false);
+  }, [spotCheckImage?.image_id]);
+
+  const handleImageLoad = () => {
+    imageLoadedAtRef.current = Date.now();
+  };
+
+  const handleAnswer = (value) => {
+    if (answer !== null) return;
+    const now = Date.now();
+    const loadedAt = imageLoadedAtRef.current || mountedAtRef.current;
+    setAnswer(value);
+    setPendingTiming({
+      participant_answer: value,
+      response_time_ms: now - loadedAt,
+      dwell_ms: now - loadedAt,
+      image_load_time_ms: imageLoadedAtRef.current ? imageLoadedAtRef.current - mountedAtRef.current : null,
+    });
+  };
+
+  const handleContinue = () => {
+    if (!pendingTiming) return;
+    onComplete(pendingTiming);
+  };
+
+  if (loading || !spotCheckImage) {
+    return (
+      <Panel className="mx-auto w-full max-w-2xl p-6 md:p-10">
+        <Title eyebrow="Step 5 of 8" title="One more quick check" description="Loading your image..." />
+        <div className="mt-8 flex flex-col items-center gap-4">
+          <Spinner label={error || "Preparing image..."} />
+          {error ? <Button onClick={onRetry}>Try again</Button> : null}
+        </div>
+      </Panel>
+    );
+  }
+
   return (
-    <Panel className="mx-auto w-full max-w-4xl p-6 md:p-10">
-      <Title eyebrow="Step 5 of 8" title="Word scramble" description="Please guess the technology-related words below — unscramble each one and type your answer." />
-      <div className="mt-8 grid gap-4 md:grid-cols-2">
-        {DIFFICULT_WORDS.map((word) => (
-          <div key={word.scrambled} className="rounded-[22px] border border-slate-200 p-5">
-            <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">Scrambled word</p>
-            <p className="mt-2 text-2xl font-semibold tracking-[0.28em] text-slate-950">{word.scrambled}</p>
-            <input
-              className="srip-input mt-4"
-              placeholder="Your answer"
-              value={answers[word.scrambled] || ""}
-              onChange={(event) => setAnswers((prev) => ({ ...prev, [word.scrambled]: event.target.value }))}
-            />
+    <Panel className="mx-auto w-full max-w-2xl p-6 md:p-10">
+      <Title
+        eyebrow="Step 5 of 8"
+        title="One more quick check"
+        description="Look at the image below, then answer the question. You will not be able to go back to the feed after this."
+      />
+      <div className="srip-feed-card relative mt-6 overflow-hidden">
+        <div className="space-y-4 p-4 md:p-5">
+          <div className="overflow-hidden rounded-[22px] bg-slate-100">
+            {imageFailed ? (
+              <div className="flex aspect-[4/3] items-center justify-center rounded-[22px] bg-slate-200 px-4 text-center text-sm font-medium text-slate-600">
+                {spotCheckImage.category_id}
+              </div>
+            ) : (
+              <div className="aspect-[4/3] w-full bg-slate-100 p-3">
+                <img
+                  src={spotCheckImage.image_url}
+                  alt={spotCheckImage.feed_caption || "Spot check image"}
+                  className="h-full w-full rounded-[18px] object-contain"
+                  data-image-id={spotCheckImage.image_id}
+                  onLoad={handleImageLoad}
+                  onError={() => setImageFailed(true)}
+                />
+              </div>
+            )}
           </div>
-        ))}
-      </div>
-      <div className="mt-6 flex justify-end">
-        <Button disabled={!allFilled} onClick={onContinue}>Continue -&gt;</Button>
+
+          <div className="rounded-[24px] border border-slate-200 bg-slate-50 p-4">
+            <p className="text-sm font-semibold text-slate-900">Can you spot a label in this image?</p>
+            <div className="mt-4 flex flex-col gap-3 sm:flex-row">
+              <button
+                type="button"
+                disabled={answer !== null}
+                onClick={() => handleAnswer(true)}
+                className={`flex-1 rounded-2xl border px-4 py-3 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-50 ${
+                  answer === true ? "border-slate-900 bg-slate-900 text-white" : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"
+                }`}
+              >
+                Yes
+              </button>
+              <button
+                type="button"
+                disabled={answer !== null}
+                onClick={() => handleAnswer(false)}
+                className={`flex-1 rounded-2xl border px-4 py-3 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-50 ${
+                  answer === false ? "border-slate-900 bg-slate-900 text-white" : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"
+                }`}
+              >
+                No
+              </button>
+            </div>
+          </div>
+
+          {answer !== null ? (
+            <div className="flex justify-end">
+              <Button onClick={handleContinue}>Continue -&gt;</Button>
+            </div>
+          ) : null}
+        </div>
       </div>
     </Panel>
   );
 }
 
-function RecallPage({ recallImages, recallSelected, setRecallSelected, awarenessText, setAwarenessText, onContinue }) {
+function AwarenessPage({ awarenessText, setAwarenessText, onContinue }) {
   const [error, setError] = useState("");
-  const toggle = (imageId) => {
-    setRecallSelected((prev) => (prev.includes(imageId) ? prev.filter((value) => value !== imageId) : [...prev, imageId]));
-  };
   const handleContinue = () => {
     if (!awarenessText.trim()) { setError("Please write your answer before continuing."); return; }
     setError("");
@@ -525,32 +614,10 @@ function RecallPage({ recallImages, recallSelected, setRecallSelected, awareness
   };
 
   return (
-    <Panel className="mx-auto w-full max-w-6xl p-6 md:p-10">
-      <Title eyebrow="Step 6 of 8" title="Memory check" description="Select all images you believe were AI-generated or AI-modified." />
-      <div className="mt-8 grid grid-cols-2 gap-4 md:grid-cols-3">
-        {recallImages.map((item) => {
-          const selected = recallSelected.includes(item.image_id);
-          return (
-            <button
-              key={item.image_id}
-              type="button"
-              onClick={() => toggle(item.image_id)}
-              className={`group overflow-hidden rounded-[22px] border bg-white text-left shadow-sm transition ${selected ? "border-blue-600 ring-2 ring-blue-200" : "border-slate-200 hover:border-slate-300"}`}
-            >
-              <div className="relative aspect-[4/3] bg-slate-100 p-2">
-                <img src={item.image_url} alt={item.feed_caption} className="h-full w-full rounded-[16px] object-contain" />
-                {selected ? <div className="absolute right-3 top-3 flex h-8 w-8 items-center justify-center rounded-full bg-blue-600 text-white shadow-lg">✓</div> : null}
-              </div>
-              <div className="p-3">
-                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">{item.category_id}</p>
-                <p className="mt-1 text-sm font-medium text-slate-800">{item.feed_source_tag}</p>
-              </div>
-            </button>
-          );
-        })}
-      </div>
+    <Panel className="mx-auto w-full max-w-4xl p-6 md:p-10">
+      <Title eyebrow="Step 6 of 8" title="One last question" description="Before you finish, please answer the question below." />
       <div className="mt-8 rounded-[24px] border border-slate-200 bg-slate-50 p-5">
-        <label className="text-sm font-semibold text-slate-900">Before you finish, what do you think was the main purpose of this study? <span className="text-red-500">*</span></label>
+        <label className="text-sm font-semibold text-slate-900">What do you think was the main purpose of this study? <span className="text-red-500">*</span></label>
         <textarea className="srip-input mt-3 min-h-32" value={awarenessText} onChange={(event) => { setAwarenessText(event.target.value); if (event.target.value.trim()) setError(""); }} placeholder="Write a short answer (required)" />
         {error ? <p className="mt-2 text-sm font-medium text-red-600">{error}</p> : null}
       </div>
@@ -1244,11 +1311,11 @@ export default function App() {
   const [feedImages, setFeedImages] = useState([]);
   const [responses, setResponses] = useState({});
   const [participant, setParticipant] = useState({ name: "", email: "", roll_no: "", age: "", gender: "", ai_frequency: null, ai_confidence: null });
-  const [recallSelected, setRecallSelected] = useState([]);
-  const [recallImages, setRecallImages] = useState([]);
+  const [spotCheckImage, setSpotCheckImage] = useState(null);
+  const [spotCheckResult, setSpotCheckResult] = useState(null);
+  const [spotCheckError, setSpotCheckError] = useState("");
   const [awarenessText, setAwarenessText] = useState("");
   const [policy, setPolicy] = useState({ responsibility: "", legal_requirement: null });
-  const [distractorAnswers, setDistractorAnswers] = useState({});
   const [metrics, setMetrics] = useState(null);
   const [loadingSession, setLoadingSession] = useState(false);
   const [sessionError, setSessionError] = useState("");
@@ -1322,7 +1389,6 @@ export default function App() {
         if (cancelled) return;
         setSessionId(data.session_id);
         setFeedImages(data.images || []);
-        setRecallImages(data.images || []);
         const initialResponses = Object.fromEntries(
           (data.images || []).map((image) => [image.image_id, { ...buildResponse(), image_load_started_at: Date.now() }])
         );
@@ -1337,21 +1403,26 @@ export default function App() {
     return () => { cancelled = true; };
   }, [authToken, feedImages.length, page]);
 
+  // Single post-feed "can you spot a label" test image — fetched once the
+  // participant reaches that page, deterministic per session so a reload
+  // can't reroll a different image.
   useEffect(() => {
-    if (!authToken || page !== 6 || recallImages.length > 0 || !sessionId) return undefined;
+    if (!authToken || !sessionId || page !== 5 || spotCheckImage) return undefined;
     let cancelled = false;
     (async () => {
+      setSpotCheckError("");
       try {
-        const response = await fetch(`/api/recall-images?session_id=${encodeURIComponent(sessionId)}`, { headers: authHeaders(authToken) });
-        if (!response.ok) throw new Error("Recall images unavailable");
+        const response = await fetch(`/api/spot-image?session_id=${encodeURIComponent(sessionId)}`, { headers: authHeaders(authToken) });
+        if (!response.ok) throw new Error(`Spot-check image request failed (${response.status})`);
         const data = await response.json();
-        if (!cancelled) setRecallImages(data.images || feedImages);
-      } catch {
-        if (!cancelled) setRecallImages(feedImages);
+        if (cancelled) return;
+        setSpotCheckImage(data.image || null);
+      } catch (error) {
+        if (!cancelled) setSpotCheckError(error instanceof Error ? error.message : "Failed to load image.");
       }
     })();
     return () => { cancelled = true; };
-  }, [authToken, feedImages, page, recallImages.length, sessionId]);
+  }, [authToken, sessionId, page, spotCheckImage]);
 
   useEffect(() => {
     if (!authToken) return undefined;
@@ -1433,7 +1504,7 @@ export default function App() {
   }, [page, responses, sessionId, studyCompleted]);
 
   useEffect(() => {
-    if (!authToken || page !== 9 || !studyCompleted) return undefined;
+    if (!authToken || page !== 8 || !studyCompleted) return undefined;
     let cancelled = false;
     (async () => {
       setWallLoading(true);
@@ -1511,11 +1582,11 @@ export default function App() {
     setSessionId(null);
     setFeedImages([]);
     setResponses({});
-    setRecallSelected([]);
-    setRecallImages([]);
+    setSpotCheckImage(null);
+    setSpotCheckResult(null);
+    setSpotCheckError("");
     setAwarenessText("");
     setPolicy({ responsibility: "", legal_requirement: null });
-    setDistractorAnswers({});
     setMetrics(null);
     setStudyCompleted(false);
     setNotifications([]);
@@ -1594,10 +1665,6 @@ export default function App() {
     if (!sessionId || !authToken || !authUser) return;
     setSubmitting(true);
     try {
-      const aiImages = feedImages.filter((item) => item.is_ai);
-      const correctAiIds = aiImages.map((item) => item.image_id);
-      const selectedAiIds = recallSelected;
-      const correctlyRecalled = selectedAiIds.filter((imageId) => correctAiIds.includes(imageId));
       const device = getDeviceInfo();
       const attentionResponse = responses[ATTENTION_CHECK_ID];
       const payload = {
@@ -1638,7 +1705,22 @@ export default function App() {
             verdict_change_count: state.verdict_change_count || 0
           };
         }),
-        recall: { selected_image_ids: selectedAiIds, correct_ai_ids: correctAiIds, recall_accuracy: correctAiIds.length ? correctlyRecalled.length / correctAiIds.length : 0 },
+        spot_check: spotCheckImage
+          ? {
+              image_id: spotCheckImage.image_id,
+              category_id: spotCheckImage.category_id,
+              category_folder: spotCheckImage.category_folder || "",
+              image_type: spotCheckImage.image_type,
+              is_ai: spotCheckImage.is_ai,
+              label_size_pct: spotCheckImage.label_size_pct,
+              label_position: spotCheckImage.label_position,
+              label_type: spotCheckImage.label_type || "",
+              participant_answer: spotCheckResult?.participant_answer ?? null,
+              dwell_ms: spotCheckResult?.dwell_ms || 0,
+              response_time_ms: spotCheckResult?.response_time_ms ?? null,
+              image_load_time_ms: spotCheckResult?.image_load_time_ms ?? null,
+            }
+          : undefined,
         awareness_response: awarenessText,
         policy,
         total_time_ms: Date.now() - surveyStartRef.current,
@@ -1679,7 +1761,7 @@ export default function App() {
     }
   };
 
-  const progress = { 1: 0, 2: 12, 3: 20, 4: 52, 5: 68, 6: 85, 7: 93, 8: 97, 9: 98, 10: 100 };
+  const progress = { 1: 0, 2: 14, 3: 25, 4: 60, 5: 71, 6: 82, 7: 92, 8: 97, 9: 99, 10: 100 };
 
   if (consentDeclined) return <ExitScreen />;
 
@@ -1764,8 +1846,16 @@ export default function App() {
                 }}
               />
             ) : null}
-            {!wallOnlyMode && page === 5 ? <DistractorPage answers={distractorAnswers} setAnswers={setDistractorAnswers} onContinue={() => goTo(6)} /> : null}
-            {!wallOnlyMode && page === 6 ? <RecallPage recallImages={recallImages.length > 0 ? recallImages : feedImages} recallSelected={recallSelected} setRecallSelected={setRecallSelected} awarenessText={awarenessText} setAwarenessText={setAwarenessText} onContinue={() => goTo(7)} /> : null}
+            {!wallOnlyMode && page === 5 ? (
+              <SpotCheckPage
+                spotCheckImage={spotCheckImage}
+                loading={!spotCheckImage && !spotCheckError}
+                error={spotCheckError}
+                onRetry={() => { setSpotCheckError(""); setSpotCheckImage(null); }}
+                onComplete={(timing) => { setSpotCheckResult(timing); goTo(6); }}
+              />
+            ) : null}
+            {!wallOnlyMode && page === 6 ? <AwarenessPage awarenessText={awarenessText} setAwarenessText={setAwarenessText} onContinue={() => goTo(7)} /> : null}
             {!wallOnlyMode && page === 7 ? <PolicyPage policy={policy} setPolicy={setPolicy} onSubmit={submitSurvey} submitting={submitting} /> : null}
             {!wallOnlyMode && page === 8 ? <ThankYouPage onContinueWall={() => goTo(9)} onDone={clearAuth} /> : null}
             {page === 9 ? <CommunityWallPage token={authToken} wallPosts={wallPosts} loading={wallLoading} error={wallError} onRetry={() => setPage(9)} onLike={handleLikeWallPost} onRefresh={refreshWall} onReply={(tid) => { setReplyTargetId(tid); setPage(10); }} /> : null}

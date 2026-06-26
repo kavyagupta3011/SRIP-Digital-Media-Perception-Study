@@ -1,0 +1,1 @@
+session_id,user_id,submitted_at,image_id,category_id,category_folder,image_type,is_ai,label_size_pct,label_position,label_type,ground_truth_has_label,participant_answer,is_correct,fast_guess_flag,dwell_ms,response_time_ms,image_load_time_ms,device_type,browser,screen_width,viewport_width

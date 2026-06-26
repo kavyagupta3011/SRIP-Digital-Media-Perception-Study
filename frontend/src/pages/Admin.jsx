@@ -9,8 +9,8 @@ const fmtMs     = (v) => v == null ? "—" : v >= 1000 ? (v / 1000).toFixed(1) +
 const fmtNum    = (v) => v == null ? "—" : typeof v === "number" ? v.toFixed(2) : String(v);
 const fmtPctBar = (v) => `${Math.round(v * 100)}%`;
 
-const LABEL_NAMES = ["0% (none)", "0.1%", "0.25%", "0.5%", "1%"];
-const BLUE_SCALE  = ["#94a3b8", "#93c5fd", "#3b82f6", "#1d4ed8", "#1e3a8a"];
+const LABEL_NAMES = ["0% (none)", "0.1%", "0.25%", "0.5%", "1%", "1.5%"];
+const BLUE_SCALE  = ["#94a3b8", "#93c5fd", "#3b82f6", "#1d4ed8", "#1e3a8a", "#172554"];
 const PIE_COLORS  = ["#3b82f6","#f59e0b","#10b981","#f43f5e","#8b5cf6","#06b6d4"];
 
 function Card({ children, className = "" }) {
@@ -170,11 +170,10 @@ function Admin() {
         {/* 2. Core detection metrics */}
         <div>
           <h2 className="mb-3 text-sm font-bold uppercase tracking-widest text-slate-400">Core Detection Metrics</h2>
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
             <StatCard label="Overall accuracy" value={fmtPct(s.overall_accuracy)} sub="Correct / total images" />
             <StatCard label="Sensitivity (AI)" value={fmtPct(s.ai_detection_rate)} sub="P(say AI | is AI)" color="text-orange-600" />
             <StatCard label="Specificity (Real)" value={fmtPct(s.real_detection_rate)} sub="P(say Real | is real)" color="text-emerald-600" />
-            <StatCard label="AI Recall accuracy" value={fmtPct(s.mean_ai_recall_accuracy)} sub="Memory check post-distractor" color="text-violet-600" />
           </div>
           <div className="mt-3 grid grid-cols-2 gap-3">
             <Card>
@@ -321,6 +320,62 @@ function Admin() {
                 <Legend />
                 <Bar dataKey="accuracy" name="Accuracy" fill="#3b82f6" radius={[4, 4, 0, 0]} />
                 <Bar dataKey="noticeability_rate" name="Noticeability" fill="#f59e0b" radius={[4, 4, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          )}
+        </Card>
+
+        {/* 5d. Post-feed single-image spot check */}
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-2">
+          <StatCard
+            label="Spot-check false positive rate"
+            value={fmtPct(s.spot_check_false_positive_rate)}
+            sub='Said "Yes" when there was no label at all'
+            color="text-red-500"
+          />
+          <StatCard
+            label="Fast-guess rate"
+            value={fmtPct(s.spot_check_fast_guess_rate)}
+            sub="Said Yes on a small label in <1.5s — likely guessing, not real detection"
+            color="text-amber-600"
+          />
+        </div>
+
+        <Card>
+          <SectionTitle
+            title="Spot-Check Detection Rate by Label Size"
+            sub='Single post-feed image, "Can you spot a label in this image?" — % who answered Yes, per label-size condition (0% = no label present, so this bucket is the false-positive rate).'
+          />
+          {!(s.spot_check_by_size?.length) ? <NoData /> : (
+            <ResponsiveContainer width="100%" height={260}>
+              <BarChart data={s.spot_check_by_size} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                <XAxis dataKey="label" tick={{ fontSize: 12 }} />
+                <YAxis domain={[0, 1]} tickFormatter={fmtPctBar} tick={{ fontSize: 12 }} />
+                <Tooltip content={<TT fmt={fmtPct} />} />
+                <Bar dataKey="detection_rate" name="% said Yes" radius={[6, 6, 0, 0]}>
+                  {s.spot_check_by_size.map((_, i) => <Cell key={i} fill={BLUE_SCALE[i] || "#1e3a8a"} />)}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          )}
+        </Card>
+
+        <Card>
+          <SectionTitle
+            title="Spot-Check Response Time by Size and Answer"
+            sub='Time from image fully loaded to answer, split by Yes/No. A fast "Yes" on a large label means it is highly noticeable. A slower "Yes" on a small label suggests genuine effortful search. A suspiciously fast "Yes" on a small label suggests random guessing rather than real detection — used to find the optimal noticeable label size.'
+          />
+          {!(s.spot_check_response_time_by_size?.length) ? <NoData /> : (
+            <ResponsiveContainer width="100%" height={260}>
+              <BarChart data={s.spot_check_response_time_by_size} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                <XAxis dataKey="label" tick={{ fontSize: 12 }} />
+                <YAxis tickFormatter={(v) => v >= 1000 ? `${(v/1000).toFixed(0)}s` : `${v}ms`} tick={{ fontSize: 11 }} />
+                <Tooltip content={<TT fmt={fmtMs} />} />
+                <Legend />
+                <Bar dataKey="rt_yes_ms" name="Avg RT (said Yes)" fill="#3b82f6" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="rt_no_ms" name="Avg RT (said No)" fill="#cbd5e1" radius={[4, 4, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           )}
@@ -505,7 +560,7 @@ function Admin() {
 
         {/* Downloads + Reset */}
         <div className="flex flex-wrap gap-3">
-          {[["responses","Download responses.csv"],["participants","Download participants.csv"],["dropouts","Download dropouts.csv"]].map(([type, label]) => (
+          {[["responses","Download responses.csv"],["participants","Download participants.csv"],["dropouts","Download dropouts.csv"],["spot_checks","Download spot_checks.csv"]].map(([type, label]) => (
             <button key={type} type="button" onClick={() => download(type)}
               className="rounded-full border border-slate-200 bg-white px-5 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">
               {label}

@@ -44,6 +44,7 @@ NOTIFICATIONS_JSON = STORE_DIR / "notifications.json"
 SHARED_POSTS_JSON = STORE_DIR / "shared_posts.json"
 MESSAGES_JSON = STORE_DIR / "messages.json"
 DROPOUTS_CSV = STORE_DIR / "dropouts.csv"
+SPOT_CHECKS_CSV = STORE_DIR / "spot_checks.csv"
 ENV_PATH = BASE_DIR / ".env"
 JWT_ALGORITHM = "HS256"
 OTP_MINUTES = 10
@@ -85,7 +86,7 @@ def compute_dprime(hit_rate: float | None, fa_rate: float | None) -> tuple[float
   return round(zh - zf, 4), round(-0.5 * (zh + zf), 4)
 
 CATEGORIES = [f"cat{index:02d}" for index in range(1, 11)]
-LABEL_SIZES = [0.0, 0.1, 0.25, 0.5, 1.0]
+LABEL_SIZES = [0.0, 0.1, 0.25, 0.5, 1.0, 1.5]
 
 PARTICIPANT_COLUMNS = [
   "session_id", "user_id", "submitted_at", "survey_start_time", "total_duration_minutes", "hour_of_day",
@@ -94,24 +95,24 @@ PARTICIPANT_COLUMNS = [
   "total_images", "total_correct", "overall_accuracy",
   "ai_images", "ai_correct", "ai_detection_rate",
   "real_images", "real_correct", "real_detection_rate",
-  "nolabel_accuracy", "label_0_1_accuracy", "label_0_25_accuracy", "label_0_5_accuracy", "label_1_0_accuracy",
-  "avg_dwell_nolabel", "avg_dwell_0_1", "avg_dwell_0_25", "avg_dwell_0_5", "avg_dwell_1_0",
-  "avg_rt_nolabel", "avg_rt_0_1", "avg_rt_0_25", "avg_rt_0_5", "avg_rt_1_0",
+  "nolabel_accuracy", "label_0_1_accuracy", "label_0_25_accuracy", "label_0_5_accuracy", "label_1_0_accuracy", "label_1_5_accuracy",
+  "avg_dwell_nolabel", "avg_dwell_0_1", "avg_dwell_0_25", "avg_dwell_0_5", "avg_dwell_1_0", "avg_dwell_1_5",
+  "avg_rt_nolabel", "avg_rt_0_1", "avg_rt_0_25", "avg_rt_0_5", "avg_rt_1_0", "avg_rt_1_5",
   "avg_label_hover_ms", "avg_zoom_count",
-  "ai_recall_accuracy", "dprime", "response_bias",
+  "dprime", "response_bias",
   # SDT per label condition (hit rate per condition, FA rate fixed from real images)
-  "dprime_nolabel", "dprime_0_1", "dprime_0_25", "dprime_0_5", "dprime_1_0",
-  "bias_nolabel", "bias_0_1", "bias_0_25", "bias_0_5", "bias_1_0",
+  "dprime_nolabel", "dprime_0_1", "dprime_0_25", "dprime_0_5", "dprime_1_0", "dprime_1_5",
+  "bias_nolabel", "bias_0_1", "bias_0_25", "bias_0_5", "bias_1_0", "bias_1_5",
   # Label nudge effect: P(say AI Modified) per condition vs no-label baseline
-  "compliance_nolabel", "compliance_0_1", "compliance_0_25", "compliance_0_5", "compliance_1_0",
-  "nudge_0_1", "nudge_0_25", "nudge_0_5", "nudge_1_0",
+  "compliance_nolabel", "compliance_0_1", "compliance_0_25", "compliance_0_5", "compliance_1_0", "compliance_1_5",
+  "nudge_0_1", "nudge_0_25", "nudge_0_5", "nudge_1_0", "nudge_1_5",
   # Efficiency and consistency
   "ies_overall",
   "rt_sd",
   # Learning/fatigue effect within session
   "first_half_accuracy", "second_half_accuracy", "learning_effect",
   # Revisit rate per label condition
-  "avg_revisits_nolabel", "avg_revisits_0_1", "avg_revisits_0_25", "avg_revisits_0_5", "avg_revisits_1_0",
+  "avg_revisits_nolabel", "avg_revisits_0_1", "avg_revisits_0_25", "avg_revisits_0_5", "avg_revisits_1_0", "avg_revisits_1_5",
   "avg_revisits_post_verdict", "verdict_change_rate",
   "total_liked", "total_shared",
   "awareness_response",
@@ -135,6 +136,21 @@ RESPONSES_COLUMNS = [
 DROPOUT_COLUMNS = [
   "session_id", "user_id", "dropped_at_page", "images_seen_count", "timestamp",
 ]
+
+SPOT_CHECK_COLUMNS = [
+  "session_id", "user_id", "submitted_at",
+  "image_id", "category_id", "category_folder", "image_type", "is_ai",
+  "label_size_pct", "label_position", "label_type",
+  "ground_truth_has_label", "participant_answer", "is_correct", "fast_guess_flag",
+  "dwell_ms", "response_time_ms", "image_load_time_ms",
+  "device_type", "browser", "screen_width", "viewport_width",
+]
+
+# Below this response-time threshold a "Yes" on a small/subtle label is more
+# likely a random guess than genuine detection (used for fast_guess_flag only,
+# never used to discard or alter a participant's actual answer).
+FAST_GUESS_MS_THRESHOLD = 1500
+FAST_GUESS_LABEL_SIZES = {0.1, 0.25}
 
 # -- Load .env before app creation so CORS and secrets are correct ------------
 def load_env_file(path: Path) -> None:
@@ -217,10 +233,19 @@ class ResponsePayload(BaseModel):
   image_position_in_feed: int = 0
 
 
-class RecallPayload(BaseModel):
-  selected_image_ids: list[str] = Field(default_factory=list)
-  correct_ai_ids: list[str] = Field(default_factory=list)
-  recall_accuracy: float = 0.0
+class SpotCheckPayload(BaseModel):
+  image_id: str = ""
+  category_id: str = ""
+  category_folder: str = ""
+  image_type: str = ""
+  is_ai: bool = False
+  label_size_pct: float = 0.0
+  label_position: str = ""
+  label_type: str = ""
+  participant_answer: bool | None = None
+  dwell_ms: float = 0.0
+  response_time_ms: float | None = None
+  image_load_time_ms: float | None = None
 
 
 class PolicyPayload(BaseModel):
@@ -241,8 +266,8 @@ class SubmitPayload(BaseModel):
   session_id: str
   participant: ParticipantPayload
   responses: list[ResponsePayload]
-  recall: RecallPayload
   awareness_response: str = ""
+  spot_check: SpotCheckPayload = Field(default_factory=SpotCheckPayload)
   policy: PolicyPayload = Field(default_factory=PolicyPayload)
   total_time_ms: int = 0
   submitted_at: str
@@ -592,6 +617,8 @@ def ensure_runtime_files() -> None:
     pd.DataFrame(columns=RESPONSES_COLUMNS).to_csv(RESPONSES_CSV, index=False)
   if not _validate_csv_columns(DROPOUTS_CSV, DROPOUT_COLUMNS):
     pd.DataFrame(columns=DROPOUT_COLUMNS).to_csv(DROPOUTS_CSV, index=False)
+  if not _validate_csv_columns(SPOT_CHECKS_CSV, SPOT_CHECK_COLUMNS):
+    pd.DataFrame(columns=SPOT_CHECK_COLUMNS).to_csv(SPOT_CHECKS_CSV, index=False)
   if not USERS_JSON.exists():
     save_json(USERS_JSON, {})
   if not NOTIFICATIONS_JSON.exists():
@@ -722,11 +749,6 @@ def compute_metrics(submit_payload: SubmitPayload) -> dict[str, Any]:
       }
     )
 
-  recall_selected = set(submit_payload.recall.selected_image_ids)
-  recall_correct = set(submit_payload.recall.correct_ai_ids)
-  recall_hits = len(recall_selected & recall_correct)
-  recall_total = len(recall_correct)
-
   def accuracy_for(size: float, nolabel_only: bool = False) -> float | None:
     grouped = [
       response for response in responses
@@ -762,6 +784,7 @@ def compute_metrics(submit_payload: SubmitPayload) -> dict[str, Any]:
   comp_0_25  = _compliance(0.25)
   comp_0_5   = _compliance(0.5)
   comp_1_0   = _compliance(1.0)
+  comp_1_5   = _compliance(1.5)
 
   def _nudge(comp: float | None) -> float | None:
     if comp is None or comp_nolabel is None:
@@ -813,6 +836,7 @@ def compute_metrics(submit_payload: SubmitPayload) -> dict[str, Any]:
     "label_0_25_accuracy": accuracy_for(0.25),
     "label_0_5_accuracy": accuracy_for(0.5),
     "label_1_0_accuracy": accuracy_for(1.0),
+    "label_1_5_accuracy": accuracy_for(1.5),
     "avg_dwell_nolabel": mean_or_none([float(r.dwell_ms) for r in responses
         if r.is_ai and float(r.label_size_pct) == 0.0 and r.image_type == "ai_nolabel"]),
     "avg_dwell_0_1":  mean_or_none([float(r.dwell_ms) for r in responses
@@ -823,6 +847,8 @@ def compute_metrics(submit_payload: SubmitPayload) -> dict[str, Any]:
         if r.is_ai and abs(float(r.label_size_pct) - 0.5) < 0.001]),
     "avg_dwell_1_0":  mean_or_none([float(r.dwell_ms) for r in responses
         if r.is_ai and abs(float(r.label_size_pct) - 1.0) < 0.001]),
+    "avg_dwell_1_5":  mean_or_none([float(r.dwell_ms) for r in responses
+        if r.is_ai and abs(float(r.label_size_pct) - 1.5) < 0.001]),
     "avg_rt_nolabel": mean_or_none(compact_numbers([numeric_or_none(r.response_time_ms)
         for r in responses if r.is_ai and float(r.label_size_pct) == 0.0 and r.image_type == "ai_nolabel"])),
     "avg_rt_0_1":  mean_or_none(compact_numbers([numeric_or_none(r.response_time_ms)
@@ -833,9 +859,10 @@ def compute_metrics(submit_payload: SubmitPayload) -> dict[str, Any]:
         for r in responses if r.is_ai and abs(float(r.label_size_pct) - 0.5) < 0.001])),
     "avg_rt_1_0":  mean_or_none(compact_numbers([numeric_or_none(r.response_time_ms)
         for r in responses if r.is_ai and abs(float(r.label_size_pct) - 1.0) < 0.001])),
+    "avg_rt_1_5":  mean_or_none(compact_numbers([numeric_or_none(r.response_time_ms)
+        for r in responses if r.is_ai and abs(float(r.label_size_pct) - 1.5) < 0.001])),
     "avg_label_hover_ms": mean_or_none([float(response.label_hover_ms) for response in responses if response.image_type == "ai_labeled"]),
     "avg_zoom_count": mean_or_none([float(response.zoom_count) for response in responses]),
-    "ai_recall_accuracy": recall_hits / recall_total if recall_total else None,
     "_dprime_inputs": (
       ai_images_correct / len(ai_responses) if ai_responses else None,
       fa_rate,
@@ -848,6 +875,7 @@ def compute_metrics(submit_payload: SubmitPayload) -> dict[str, Any]:
       "0_25": _hit_rate(0.25),
       "0_5": _hit_rate(0.5),
       "1_0": _hit_rate(1.0),
+      "1_5": _hit_rate(1.5),
     },
     # Label compliance (P(say AI) per condition)
     "compliance_nolabel": comp_nolabel,
@@ -855,10 +883,12 @@ def compute_metrics(submit_payload: SubmitPayload) -> dict[str, Any]:
     "compliance_0_25": comp_0_25,
     "compliance_0_5":  comp_0_5,
     "compliance_1_0":  comp_1_0,
+    "compliance_1_5":  comp_1_5,
     "nudge_0_1":  _nudge(comp_0_1),
     "nudge_0_25": _nudge(comp_0_25),
     "nudge_0_5":  _nudge(comp_0_5),
     "nudge_1_0":  _nudge(comp_1_0),
+    "nudge_1_5":  _nudge(comp_1_5),
     # Efficiency and consistency
     "ies_overall": ies_overall,
     "rt_sd": rt_sd,
@@ -872,6 +902,7 @@ def compute_metrics(submit_payload: SubmitPayload) -> dict[str, Any]:
     "avg_revisits_0_25": _avg_revisits(0.25),
     "avg_revisits_0_5":  _avg_revisits(0.5),
     "avg_revisits_1_0":  _avg_revisits(1.0),
+    "avg_revisits_1_5":  _avg_revisits(1.5),
     # Post-verdict revisits and verdict changes
     "avg_revisits_post_verdict": mean_or_none([float(r.revisits_post_verdict) for r in responses]),
     "verdict_change_rate": (sum(1 for r in responses if r.verdict_changed) / len(responses)) if responses else None,
@@ -919,19 +950,21 @@ def build_participant_row(submit_payload: SubmitPayload, metrics: dict[str, Any]
     "label_0_25_accuracy": metrics["label_0_25_accuracy"],
     "label_0_5_accuracy": metrics["label_0_5_accuracy"],
     "label_1_0_accuracy": metrics["label_1_0_accuracy"],
+    "label_1_5_accuracy": metrics["label_1_5_accuracy"],
     "avg_dwell_nolabel": metrics["avg_dwell_nolabel"],
     "avg_dwell_0_1": metrics["avg_dwell_0_1"],
     "avg_dwell_0_25": metrics["avg_dwell_0_25"],
     "avg_dwell_0_5": metrics["avg_dwell_0_5"],
     "avg_dwell_1_0": metrics["avg_dwell_1_0"],
+    "avg_dwell_1_5": metrics["avg_dwell_1_5"],
     "avg_rt_nolabel": metrics["avg_rt_nolabel"],
     "avg_rt_0_1": metrics["avg_rt_0_1"],
     "avg_rt_0_25": metrics["avg_rt_0_25"],
     "avg_rt_0_5": metrics["avg_rt_0_5"],
     "avg_rt_1_0": metrics["avg_rt_1_0"],
+    "avg_rt_1_5": metrics["avg_rt_1_5"],
     "avg_label_hover_ms": metrics["avg_label_hover_ms"],
     "avg_zoom_count": metrics["avg_zoom_count"],
-    "ai_recall_accuracy": metrics["ai_recall_accuracy"],
     "dprime": compute_dprime(*metrics["_dprime_inputs"])[0],
     "response_bias": compute_dprime(*metrics["_dprime_inputs"])[1],
     # SDT per label condition (shared FA rate from real images)
@@ -949,10 +982,12 @@ def build_participant_row(submit_payload: SubmitPayload, metrics: dict[str, Any]
     "compliance_0_25": metrics["compliance_0_25"],
     "compliance_0_5":  metrics["compliance_0_5"],
     "compliance_1_0":  metrics["compliance_1_0"],
+    "compliance_1_5":  metrics["compliance_1_5"],
     "nudge_0_1":  metrics["nudge_0_1"],
     "nudge_0_25": metrics["nudge_0_25"],
     "nudge_0_5":  metrics["nudge_0_5"],
     "nudge_1_0":  metrics["nudge_1_0"],
+    "nudge_1_5":  metrics["nudge_1_5"],
     # Efficiency and consistency
     "ies_overall": metrics["ies_overall"],
     "rt_sd": metrics["rt_sd"],
@@ -966,6 +1001,7 @@ def build_participant_row(submit_payload: SubmitPayload, metrics: dict[str, Any]
     "avg_revisits_0_25": metrics["avg_revisits_0_25"],
     "avg_revisits_0_5":  metrics["avg_revisits_0_5"],
     "avg_revisits_1_0":  metrics["avg_revisits_1_0"],
+    "avg_revisits_1_5":  metrics["avg_revisits_1_5"],
     "avg_revisits_post_verdict": metrics["avg_revisits_post_verdict"],
     "verdict_change_rate": metrics["verdict_change_rate"],
     "total_liked": metrics["total_liked"],
@@ -1029,6 +1065,47 @@ def build_response_rows(submit_payload: SubmitPayload, user_id: str) -> list[dic
   return rows
 
 
+def build_spot_check_row(submit_payload: SubmitPayload, user_id: str) -> dict[str, Any]:
+  device = submit_payload.device
+  spot = submit_payload.spot_check
+  ground_truth_has_label = spot.image_type == "ai_labeled"
+  is_correct = (
+    spot.participant_answer == ground_truth_has_label
+    if spot.participant_answer is not None
+    else None
+  )
+  fast_guess_flag = bool(
+    spot.participant_answer is True
+    and round(spot.label_size_pct, 2) in FAST_GUESS_LABEL_SIZES
+    and spot.response_time_ms is not None
+    and spot.response_time_ms < FAST_GUESS_MS_THRESHOLD
+  )
+  return {
+    "session_id": submit_payload.session_id,
+    "user_id": user_id,
+    "submitted_at": submit_payload.submitted_at,
+    "image_id": spot.image_id,
+    "category_id": spot.category_id,
+    "category_folder": spot.category_folder,
+    "image_type": spot.image_type,
+    "is_ai": spot.is_ai,
+    "label_size_pct": spot.label_size_pct,
+    "label_position": spot.label_position,
+    "label_type": spot.label_type,
+    "ground_truth_has_label": ground_truth_has_label,
+    "participant_answer": spot.participant_answer,
+    "is_correct": is_correct,
+    "fast_guess_flag": fast_guess_flag,
+    "dwell_ms": spot.dwell_ms,
+    "response_time_ms": spot.response_time_ms,
+    "image_load_time_ms": spot.image_load_time_ms,
+    "device_type": device.device_type,
+    "browser": device.browser,
+    "screen_width": device.screen_width,
+    "viewport_width": device.viewport_width,
+  }
+
+
 def build_session_images(session_id: str) -> list[dict[str, Any]]:
   manifest = load_manifest()
   rng = random.Random(session_id)
@@ -1048,6 +1125,45 @@ def build_session_images(session_id: str) -> list[dict[str, Any]]:
 
   rng.shuffle(selected_rows)
   return selected_rows
+
+
+def build_spot_check_image(session_id: str) -> dict[str, Any]:
+  """
+  Picks the single post-feed "can you spot a label" test image for a session.
+
+  Stratified by label size: shuffle the 6 size buckets (0%, 0.1%, 0.25%,
+  0.5%, 1%, 1.5%) with a session-seeded RNG, then take the first bucket that still
+  has an eligible image once this participant's own 10 feed images are
+  excluded. This keeps per-bucket sample sizes roughly even across the whole
+  participant pool (needed for a clean detection-rate-vs-size curve) while
+  staying deterministic per session, so reloading the page can't reroll a
+  different image.
+  """
+  manifest = load_manifest()
+  feed_images = build_session_images(session_id)
+  excluded_ids = {img["image_id"] for img in feed_images}
+  rng = random.Random(f"{session_id}:spot_check")
+
+  buckets = list(LABEL_SIZES)
+  rng.shuffle(buckets)
+
+  for size in buckets:
+    if size == 0.0:
+      eligible = manifest[manifest["image_type"].isin(["real", "ai_nolabel"])]
+    else:
+      eligible = manifest[(manifest["image_type"] == "ai_labeled") & (manifest["label_size_pct"] == size)]
+    eligible = eligible[~eligible["image_id"].isin(excluded_ids)]
+    if not eligible.empty:
+      chosen = eligible.iloc[rng.randrange(len(eligible))]
+      return as_image_object(chosen)
+
+  # Fallback (only if every bucket was exhausted by the exclusion, e.g. a
+  # very small dataset): allow a repeat of a feed image rather than 500-ing.
+  eligible_any = manifest[~manifest["image_id"].isin(excluded_ids)]
+  if eligible_any.empty:
+    eligible_any = manifest
+  chosen = eligible_any.iloc[rng.randrange(len(eligible_any))]
+  return as_image_object(chosen)
 
 
 def get_csv_response(csv_path: Path, filename: str):
@@ -1348,17 +1464,11 @@ def create_session(
   return {"session_id": session_id, "images": images, "user_id": current_user["user_id"]}
 
 
-@app.get("/api/recall-images")
-def recall_images(session_id: str = Query(..., min_length=1), current_user: dict[str, Any] = Depends(get_current_user)) -> dict[str, Any]:
+@app.get("/api/spot-image")
+def spot_image(session_id: str = Query(..., min_length=1), current_user: dict[str, Any] = Depends(get_current_user)) -> dict[str, Any]:
   _ = current_user
-  # NOTE: build_session_images() seeds its RNG with session_id, so it always
-  # regenerates the exact same image list for a given session_id. We
-  # recompute rather than reading from the in-memory session_store, because
-  # with multiple uvicorn workers (see Procfile) a participant's later
-  # request can land on a different worker process than the one that
-  # created their session — an in-memory dict would wrongly 404 in that case.
-  images = build_session_images(session_id)
-  return {"session_id": session_id, "images": images}
+  image = build_spot_check_image(session_id)
+  return {"session_id": session_id, "image": image}
 
 
 @app.post("/api/social/share")
@@ -1537,6 +1647,7 @@ def submit_study(
   metrics = compute_metrics(payload)
   participant_row = build_participant_row(payload, metrics, user_id)
   response_rows = build_response_rows(payload, user_id)
+  spot_check_row = build_spot_check_row(payload, user_id)
 
   ensure_runtime_files()
   append_row(PARTICIPANTS_CSV, participant_row, PARTICIPANT_COLUMNS)
@@ -1545,6 +1656,8 @@ def submit_study(
       pd.DataFrame(response_rows, columns=RESPONSES_COLUMNS).to_csv(
         RESPONSES_CSV, mode="a", index=False, header=False
       )
+  if spot_check_row.get("image_id"):
+    append_row(SPOT_CHECKS_CSV, spot_check_row, SPOT_CHECK_COLUMNS)
 
   # Mark user as completed
   email = current_user["email"]
@@ -1562,7 +1675,6 @@ def submit_study(
     "overall_accuracy": metrics.get("overall_accuracy"),
     "ai_detection_rate": metrics.get("ai_detection_rate"),
     "real_detection_rate": metrics.get("real_detection_rate"),
-    "ai_recall_accuracy": metrics.get("ai_recall_accuracy"),
   }
 
 
@@ -1666,16 +1778,15 @@ def admin_stats(_: None = Depends(require_admin)) -> dict[str, Any]:
   completed_studies = sum(1 for user in users.values() if user.get("study_completed"))
   live_participants = sum(1 for user in users.values() if user_is_online(user))
 
-  LABEL_NAMES = ["0% (none)", "0.1%", "0.25%", "0.5%", "1%"]
-  RT_COLS = ["avg_rt_nolabel", "avg_rt_0_1", "avg_rt_0_25", "avg_rt_0_5", "avg_rt_1_0"]
-  DWELL_COLS = ["avg_dwell_nolabel", "avg_dwell_0_1", "avg_dwell_0_25", "avg_dwell_0_5", "avg_dwell_1_0"]
-  ACC_COLS = ["nolabel_accuracy", "label_0_1_accuracy", "label_0_25_accuracy", "label_0_5_accuracy", "label_1_0_accuracy"]
+  LABEL_NAMES = ["0% (none)", "0.1%", "0.25%", "0.5%", "1%", "1.5%"]
+  RT_COLS = ["avg_rt_nolabel", "avg_rt_0_1", "avg_rt_0_25", "avg_rt_0_5", "avg_rt_1_0", "avg_rt_1_5"]
+  DWELL_COLS = ["avg_dwell_nolabel", "avg_dwell_0_1", "avg_dwell_0_25", "avg_dwell_0_5", "avg_dwell_1_0", "avg_dwell_1_5"]
+  ACC_COLS = ["nolabel_accuracy", "label_0_1_accuracy", "label_0_25_accuracy", "label_0_5_accuracy", "label_1_0_accuracy", "label_1_5_accuracy"]
 
   overall_accuracy = None
   ai_detection_rate = None
   real_detection_rate = None
-  mean_recall_accuracy = None
-  label_accuracy = [{"label_size_pct": size, "label": LABEL_NAMES[i], "accuracy": None} for i, size in enumerate(LABEL_SIZES)]
+  label_accuracy =[{"label_size_pct": size, "label": LABEL_NAMES[i], "accuracy": None} for i, size in enumerate(LABEL_SIZES)]
   rt_by_label = []
   dwell_by_label = []
   accuracy_by_confidence = []
@@ -1695,7 +1806,6 @@ def admin_stats(_: None = Depends(require_admin)) -> dict[str, Any]:
       overall_accuracy = safe_mean("overall_accuracy")
       ai_detection_rate = safe_mean("ai_detection_rate")
       real_detection_rate = safe_mean("real_detection_rate")
-      mean_recall_accuracy = safe_mean("ai_recall_accuracy")
 
       for i, size in enumerate(LABEL_SIZES):
         label_accuracy[i]["accuracy"] = safe_mean(ACC_COLS[i])
@@ -1736,7 +1846,7 @@ def admin_stats(_: None = Depends(require_admin)) -> dict[str, Any]:
 
   dropout_total = 0
   dropout_by_page: list[dict[str, Any]] = []
-  PAGE_LABELS = {1: "Consent", 2: "Demographics", 3: "Instructions", 4: "Feed", 5: "Distractor", 6: "Recall", 7: "Policy"}
+  PAGE_LABELS = {1: "Consent", 2: "Demographics", 3: "Instructions", 4: "Feed", 5: "Spot Check", 6: "Awareness", 7: "Policy"}
   if DROPOUTS_CSV.exists():
     try:
       drop_frame = pd.read_csv(DROPOUTS_CSV)
@@ -1762,6 +1872,10 @@ def admin_stats(_: None = Depends(require_admin)) -> dict[str, Any]:
   like_rate_by_type: list[dict] = []
   label_nudge_effect: list[dict] = []
   label_position_accuracy: list[dict] = []
+  spot_check_by_size: list[dict] = []
+  spot_check_response_time_by_size: list[dict] = []
+  spot_check_false_positive_rate: float | None = None
+  spot_check_fast_guess_rate: float | None = None
   mean_dprime: float | None = None
   mean_response_bias: float | None = None
   attention_pass_rate: float | None = None
@@ -1769,12 +1883,13 @@ def admin_stats(_: None = Depends(require_admin)) -> dict[str, Any]:
   mean_learning_effect: float | None = None
   completion_rate: float | None = total_users and round(completed_studies / total_users, 4)
 
-  LABEL_NAMES_MAP = {0.0: "0% (none)", 0.1: "0.1%", 0.25: "0.25%", 0.5: "0.5%", 1.0: "1%"}
+  LABEL_NAMES_MAP = {0.0: "0% (none)", 0.1: "0.1%", 0.25: "0.25%", 0.5: "0.5%", 1.0: "1%", 1.5: "1.5%"}
   NUDGE_COLS = [
     ("0.1%",  "compliance_nolabel", "compliance_0_1"),
     ("0.25%", "compliance_nolabel", "compliance_0_25"),
     ("0.5%",  "compliance_nolabel", "compliance_0_5"),
     ("1%",    "compliance_nolabel", "compliance_1_0"),
+    ("1.5%",  "compliance_nolabel", "compliance_1_5"),
   ]
 
   if PARTICIPANTS_CSV.exists():
@@ -1873,6 +1988,55 @@ def admin_stats(_: None = Depends(require_admin)) -> dict[str, Any]:
     except Exception:
       pass
 
+  # Post-feed "can you spot a label" single-image test, pooled across all
+  # participants (each participant only sees one image, so the detection
+  # rate / response-time curve below is built from one data point per
+  # participant per label-size bucket).
+  if SPOT_CHECKS_CSV.exists():
+    try:
+      sf = pd.read_csv(SPOT_CHECKS_CSV)
+      if not sf.empty and "label_size_pct" in sf.columns and "participant_answer" in sf.columns:
+        sf["participant_answer"] = sf["participant_answer"].astype("boolean")
+        for size, grp in sf.groupby("label_size_pct"):
+          answered = grp["participant_answer"].dropna()
+          label = LABEL_NAMES_MAP.get(float(size), f"{size}%")
+          detection_rate = round(float(answered.mean()), 4) if len(answered) > 0 else None
+          accuracy_rate = None
+          if "is_correct" in grp.columns:
+            correct = grp["is_correct"].dropna()
+            accuracy_rate = round(float(correct.astype("boolean").astype(float).mean()), 4) if len(correct) > 0 else None
+          spot_check_by_size.append({
+            "label": label,
+            "label_size_pct": float(size),
+            "detection_rate": detection_rate,
+            "accuracy": accuracy_rate,
+            "n": len(grp),
+          })
+
+          rt_yes = grp.loc[grp["participant_answer"] == True, "response_time_ms"].dropna() if "response_time_ms" in grp.columns else pd.Series(dtype=float)
+          rt_no = grp.loc[grp["participant_answer"] == False, "response_time_ms"].dropna() if "response_time_ms" in grp.columns else pd.Series(dtype=float)
+          spot_check_response_time_by_size.append({
+            "label": label,
+            "label_size_pct": float(size),
+            "rt_yes_ms": round(float(rt_yes.mean()), 1) if len(rt_yes) > 0 else None,
+            "rt_no_ms": round(float(rt_no.mean()), 1) if len(rt_no) > 0 else None,
+            "n_yes": int(len(rt_yes)),
+            "n_no": int(len(rt_no)),
+          })
+
+        spot_check_by_size.sort(key=lambda x: x["label_size_pct"])
+        spot_check_response_time_by_size.sort(key=lambda x: x["label_size_pct"])
+
+        # False positive rate: saying "Yes" when there is in fact no label (size 0%).
+        zero_bucket = next((row for row in spot_check_by_size if row["label_size_pct"] == 0.0), None)
+        spot_check_false_positive_rate = zero_bucket["detection_rate"] if zero_bucket else None
+
+        if "fast_guess_flag" in sf.columns:
+          flags = sf["fast_guess_flag"].dropna().astype("boolean")
+          spot_check_fast_guess_rate = round(float(flags.astype(float).mean()), 4) if len(flags) > 0 else None
+    except Exception:
+      pass
+
   return {
     "total_users": total_users,
     "completed_studies": completed_studies,
@@ -1881,7 +2045,6 @@ def admin_stats(_: None = Depends(require_admin)) -> dict[str, Any]:
     "overall_accuracy": overall_accuracy,
     "ai_detection_rate": ai_detection_rate,
     "real_detection_rate": real_detection_rate,
-    "mean_ai_recall_accuracy": mean_recall_accuracy,
     "mean_dprime": mean_dprime,
     "mean_response_bias": mean_response_bias,
     "attention_pass_rate": attention_pass_rate,
@@ -1899,6 +2062,10 @@ def admin_stats(_: None = Depends(require_admin)) -> dict[str, Any]:
     "label_noticeability": label_noticeability,
     "label_nudge_effect": label_nudge_effect,
     "label_position_accuracy": label_position_accuracy,
+    "spot_check_by_size": spot_check_by_size,
+    "spot_check_response_time_by_size": spot_check_response_time_by_size,
+    "spot_check_false_positive_rate": spot_check_false_positive_rate,
+    "spot_check_fast_guess_rate": spot_check_fast_guess_rate,
     "like_rate_by_type": like_rate_by_type,
     "mean_ies": mean_ies,
     "mean_learning_effect": mean_learning_effect,
@@ -1921,6 +2088,8 @@ def admin_export(dataset: str, password: str = Query(...)) -> FileResponse:
     return get_csv_response(PARTICIPANTS_CSV, "participants.csv")
   if dataset == "dropouts":
     return get_csv_response(DROPOUTS_CSV, "dropouts.csv")
+  if dataset == "spot_checks":
+    return get_csv_response(SPOT_CHECKS_CSV, "spot_checks.csv")
   raise HTTPException(status_code=404, detail="Unknown dataset")
 
 
@@ -1932,6 +2101,8 @@ def admin_reset(_: None = Depends(require_admin)) -> dict[str, str]:
     pd.DataFrame(columns=RESPONSES_COLUMNS).to_csv(RESPONSES_CSV, index=False)
   with _lock_for(DROPOUTS_CSV):
     pd.DataFrame(columns=DROPOUT_COLUMNS).to_csv(DROPOUTS_CSV, index=False)
+  with _lock_for(SPOT_CHECKS_CSV):
+    pd.DataFrame(columns=SPOT_CHECK_COLUMNS).to_csv(SPOT_CHECKS_CSV, index=False)
   save_json(SHARED_POSTS_JSON, [])
   save_json(NOTIFICATIONS_JSON, {})
   save_json(MESSAGES_JSON, {})
