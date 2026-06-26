@@ -363,7 +363,7 @@ SPOT_CHECK_COLUMNS = [
   "image_id", "category_id", "category_folder", "image_type", "is_ai",
   "label_size_pct", "label_position", "label_type",
   "ground_truth_has_label", "participant_answer", "is_correct", "fast_guess_flag",
-  "dwell_ms", "response_time_ms", "image_load_time_ms",
+  "dwell_ms", "response_time_ms", "image_load_time_ms", "label_hover_ms",
   "device_type", "browser", "screen_width", "viewport_width",
 ]
 
@@ -467,6 +467,7 @@ class SpotCheckPayload(BaseModel):
   dwell_ms: float = 0.0
   response_time_ms: float | None = None
   image_load_time_ms: float | None = None
+  label_hover_ms: float = 0.0
 
 
 class PolicyPayload(BaseModel):
@@ -1322,6 +1323,7 @@ def build_spot_check_row(submit_payload: SubmitPayload, user_id: str) -> dict[st
     "dwell_ms": spot.dwell_ms,
     "response_time_ms": spot.response_time_ms,
     "image_load_time_ms": spot.image_load_time_ms,
+    "label_hover_ms": spot.label_hover_ms,
     "device_type": device.device_type,
     "browser": device.browser,
     "screen_width": device.screen_width,

@@ -488,6 +488,8 @@ function SpotCheckPage({ spotCheckImage, loading, error, onRetry, onComplete }) 
   const [pendingTiming, setPendingTiming] = useState(null);
   const mountedAtRef = useRef(Date.now());
   const imageLoadedAtRef = useRef(null);
+  const labelHoverStartRef = useRef(null);
+  const labelHoverMsRef = useRef(0);
 
   // Same back-block pattern as the feed: once you've answered the spot
   // check, you cannot navigate back into the 10-image feed.
@@ -501,6 +503,8 @@ function SpotCheckPage({ spotCheckImage, loading, error, onRetry, onComplete }) 
   useEffect(() => {
     mountedAtRef.current = Date.now();
     imageLoadedAtRef.current = null;
+    labelHoverStartRef.current = null;
+    labelHoverMsRef.current = 0;
     setAnswer(null);
     setPendingTiming(null);
     setImageFailed(false);
@@ -510,16 +514,47 @@ function SpotCheckPage({ spotCheckImage, loading, error, onRetry, onComplete }) 
     imageLoadedAtRef.current = Date.now();
   };
 
+  const handleImageMouseMove = (event) => {
+    const labelPosition = spotCheckImage?.label_position;
+    if (!labelPosition || labelPosition === "none") return;
+    const rect = event.currentTarget.getBoundingClientRect();
+    const x = (event.clientX - rect.left) / rect.width;
+    const y = (event.clientY - rect.top) / rect.height;
+    const inLabelArea =
+      (labelPosition === "topleft" && x < 0.3 && y < 0.3) ||
+      (labelPosition === "topright" && x > 0.7 && y < 0.3) ||
+      (labelPosition === "bottomleft" && x < 0.3 && y > 0.7) ||
+      (labelPosition === "bottomright" && x > 0.7 && y > 0.7);
+    if (inLabelArea) {
+      labelHoverStartRef.current = labelHoverStartRef.current || Date.now();
+    } else if (labelHoverStartRef.current) {
+      labelHoverMsRef.current += Date.now() - labelHoverStartRef.current;
+      labelHoverStartRef.current = null;
+    }
+  };
+
+  const handleImageMouseLeave = () => {
+    if (labelHoverStartRef.current) {
+      labelHoverMsRef.current += Date.now() - labelHoverStartRef.current;
+      labelHoverStartRef.current = null;
+    }
+  };
+
   const handleAnswer = (value) => {
     if (answer !== null) return;
     const now = Date.now();
     const loadedAt = imageLoadedAtRef.current || mountedAtRef.current;
+    if (labelHoverStartRef.current) {
+      labelHoverMsRef.current += now - labelHoverStartRef.current;
+      labelHoverStartRef.current = null;
+    }
     setAnswer(value);
     setPendingTiming({
       participant_answer: value,
       response_time_ms: now - loadedAt,
       dwell_ms: now - loadedAt,
       image_load_time_ms: imageLoadedAtRef.current ? imageLoadedAtRef.current - mountedAtRef.current : null,
+      label_hover_ms: labelHoverMsRef.current,
     });
   };
 
@@ -562,6 +597,8 @@ function SpotCheckPage({ spotCheckImage, loading, error, onRetry, onComplete }) 
                   className="h-full w-full rounded-[18px] object-contain"
                   data-image-id={spotCheckImage.image_id}
                   onLoad={handleImageLoad}
+                  onMouseMove={handleImageMouseMove}
+                  onMouseLeave={handleImageMouseLeave}
                   onError={() => setImageFailed(true)}
                 />
               </div>
@@ -1719,6 +1756,7 @@ export default function App() {
               dwell_ms: spotCheckResult?.dwell_ms || 0,
               response_time_ms: spotCheckResult?.response_time_ms ?? null,
               image_load_time_ms: spotCheckResult?.image_load_time_ms ?? null,
+              label_hover_ms: spotCheckResult?.label_hover_ms || 0,
             }
           : undefined,
         awareness_response: awarenessText,
