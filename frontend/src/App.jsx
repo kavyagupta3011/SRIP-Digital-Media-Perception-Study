@@ -236,8 +236,19 @@ function AuthPage({ onAuthenticated, onCompletedStudy, onDevMode }) {
   const [loading, setLoading] = useState(false);
   const [error, setError]     = useState("");
   const [devOtp, setDevOtp]   = useState("");
+  const [showDevOtp, setShowDevOtp] = useState(false);
   const [isNew, setIsNew]     = useState(false);
   const [completedNotice, setCompletedNotice] = useState("");
+
+  // Delay showing the fallback-code box for a few seconds so it reads like
+  // "you didn't get the email, so here's another way" rather than popping up
+  // instantly alongside "We sent a code to your email".
+  useEffect(() => {
+    if (!devOtp) { setShowDevOtp(false); return undefined; }
+    setShowDevOtp(false);
+    const timer = setTimeout(() => setShowDevOtp(true), 5000);
+    return () => clearTimeout(timer);
+  }, [devOtp]);
 
   // Step 1 – just check if the email is registered (no OTP yet)
   const checkEmail = async (event) => {
@@ -366,7 +377,7 @@ function AuthPage({ onAuthenticated, onCompletedStudy, onDevMode }) {
             <Button type="submit" disabled={loading} className="w-full">{loading ? "Verifying…" : "Verify →"}</Button>
             <button type="button" className="w-full text-sm text-slate-400 hover:text-slate-600" onClick={() => { setStage(isNew ? "info" : "email"); setOtp(""); setError(""); }}>← Back</button>
           </form>
-          {devOtp ? <p className="mt-4 rounded-xl bg-yellow-50 px-4 py-2 text-center text-sm font-medium text-yellow-800">Unable to get OTP? Use this instead: <strong>{devOtp}</strong></p> : null}
+          {devOtp && showDevOtp ? <p className="mt-4 rounded-xl bg-yellow-50 px-4 py-2 text-center text-sm font-medium text-yellow-800">Unable to get OTP? Use this instead: <strong>{devOtp}</strong></p> : null}
         </>
       ) : null}
 
@@ -1826,7 +1837,6 @@ export default function App() {
   return (
     <div className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(255,255,255,0.64),_transparent_28%),linear-gradient(180deg,#f4f7fb_0%,#edf2f7_100%)] text-slate-900">
       <ProgressBar value={progress[page] || 0} />
-      {isDevMode ? <div className="sticky top-0 z-50 bg-yellow-400 px-4 py-2 text-center text-xs font-bold uppercase tracking-widest text-yellow-900">⚠ DEV MODE — emails not sent, OTPs printed to console</div> : null}
       <HeaderBar
         user={authUser}
         unreadCount={unreadCount}
