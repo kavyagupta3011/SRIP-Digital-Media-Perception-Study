@@ -1773,15 +1773,19 @@ def social_share(payload: SocialSharePayload, current_user: dict[str, Any] = Dep
       },
     )
 
-    queue_share_email(
-      sharer_id=str(current_user["user_id"]),
-      sharer_name=current_user.get("name", ""),
-      recipient_id=str(recipient["user_id"]),
-      recipient_email=str(recipient["email"]),
-      recipient_name=str(recipient.get("name", "")),
-      recipient_study_completed=bool(recipient.get("study_completed")),
-      feed_caption=payload.feed_caption or "",
-    )
+    # In dev mode, skip the email pipeline entirely -- the share already
+    # shows up in-app (notification + message above), so there's no need to
+    # queue/debounce an email that would just get logged and discarded.
+    if not is_dev_mode():
+      queue_share_email(
+        sharer_id=str(current_user["user_id"]),
+        sharer_name=current_user.get("name", ""),
+        recipient_id=str(recipient["user_id"]),
+        recipient_email=str(recipient["email"]),
+        recipient_name=str(recipient.get("name", "")),
+        recipient_study_completed=bool(recipient.get("study_completed")),
+        feed_caption=payload.feed_caption or "",
+      )
 
   shared_post = {
     "post_id": shared_post_id,

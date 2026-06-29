@@ -246,7 +246,7 @@ function AuthPage({ onAuthenticated, onCompletedStudy, onDevMode }) {
   useEffect(() => {
     if (!devOtp) { setShowDevOtp(false); return undefined; }
     setShowDevOtp(false);
-    const timer = setTimeout(() => setShowDevOtp(true), 5000);
+    const timer = setTimeout(() => setShowDevOtp(true), 15000);
     return () => clearTimeout(timer);
   }, [devOtp]);
 
