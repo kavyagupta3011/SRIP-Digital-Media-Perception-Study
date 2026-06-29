@@ -108,3 +108,18 @@ body {
     transform: rotate(360deg);
   }
 }
+
+.srip-toast-animate {
+  animation: sripToastIn 0.45s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes sripToastIn {
+  from {
+    transform: translateY(-120%);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
