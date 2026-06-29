@@ -366,7 +366,7 @@ function AuthPage({ onAuthenticated, onCompletedStudy, onDevMode }) {
             <Button type="submit" disabled={loading} className="w-full">{loading ? "Verifying…" : "Verify →"}</Button>
             <button type="button" className="w-full text-sm text-slate-400 hover:text-slate-600" onClick={() => { setStage(isNew ? "info" : "email"); setOtp(""); setError(""); }}>← Back</button>
           </form>
-          {devOtp ? <p className="mt-4 rounded-xl bg-yellow-50 px-4 py-2 text-center text-sm font-medium text-yellow-800">Dev OTP: <strong>{devOtp}</strong></p> : null}
+          {devOtp ? <p className="mt-4 rounded-xl bg-yellow-50 px-4 py-2 text-center text-sm font-medium text-yellow-800">Unable to get OTP? Use this instead: <strong>{devOtp}</strong></p> : null}
         </>
       ) : null}
 
